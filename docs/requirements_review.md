@@ -19,7 +19,7 @@ Company aliases were checked against the [Portuguese government EEM entry](https
 
 ## Prioritized remaining work
 
-An experimental coded-agent Plan B now provides an assessment/demo path without changing production results. It coordinates classification, provider memory, optional Gemini or OpenAI extraction, stronger validation, and review routing; stores a step trace; compares its fields with deterministic Plan A; and captures a human accuracy verdict. The strict five-distinct-prior-approvals rule and stronger consistency checks currently belong to Plan B, so the P0 production gaps below remain until A/B evidence supports promotion.
+An experimental coded-agent Plan B now provides an assessment/demo path without changing production results. It coordinates classification, provider memory, Gemini or OpenAI extraction, stronger validation, and review routing; stores a step trace; compares its fields with the complete July OCR + direct LLM Plan A; and captures a human accuracy verdict. The two rule-only configurations remain diagnostic ablations. The strict five-distinct-prior-approvals rule and stronger consistency checks currently belong to Plan B, so the P0 production gaps below remain until A/B evidence supports promotion.
 
 | Priority | Requirement and current evidence | Concrete next step and completion evidence |
 | --- | --- | --- |

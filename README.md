@@ -197,7 +197,7 @@ Start the loopback-only server:
 uv run python scripts\gradio_app.py
 ```
 
-Open [http://127.0.0.1:7860]. Upload an invoice PDF or image; the app runs the OCR stage automatically. The interface shows required-field retrieval percentages, a 19-field Plan A/Plan B comparison table, OCR and post-processing diagnostics, the five Plan B agent events, a local extraction audit log, the provider knowledge base, a FAISS index rebuild action, the optional judge, and a human verdict control.
+Open [http://127.0.0.1:7860]. Upload an invoice PDF or image; the app runs the OCR stage automatically. The primary comparison is Plan A (the complete July OCR + direct LLM pipeline) versus Plan B (the same OCR/model inside the agent workflow). The interface shows required-field retrieval percentages, all 19 normalized values, rejected-field diagnostics, the five Plan B agent events, a local extraction audit log, the provider knowledge base, a FAISS index rebuild action, the optional judge, and a human verdict control.
 
 For scanned PDFs, OCRmyPDF is preferred when installed. Bare local environments can fall back to
 Poppler (`pdftoppm`) plus Tesseract, including the same bounded enhancement used for small image scans.
@@ -205,7 +205,7 @@ Portuguese and English Tesseract language data are required for comparable Portu
 
 Each A/B artifact records sanitized preprocessing metadata and stage decisions. It does not store the OCR text, model prompts, or API keys in the audit log. The structured plan rows still contain invoice fields and remain under the ignored local `data/` tree.
 
-Plan B model extraction is disabled by default. Without it, Plan B still runs classification, provider-memory retrieval, deterministic fallback extraction, validation, and review routing. Enable **Optional Plan B LLM extraction**, select Gemini or OpenAI, and provide a request-only key to run the stronger OCR + LLM + agent comparison. The uploaded invoice, OCR evidence, and retrieved provider context are sent to the selected provider only for that explicitly enabled run; the key is not written to the A/B artifact.
+The primary A/B action requires a request-only Gemini or OpenAI key because both Plan A and Plan B include model extraction. The diagnostic no-LLM button runs the two rule ablations locally. The uploaded invoice and OCR evidence are sent to the selected provider for both primary candidates; Plan B additionally sends matching provider context. The key is not written to the A/B artifact.
 
 The **Four-case assessment** tab compares OCR + rules, OCR + direct LLM, OCR + agentic rules, and OCR + LLM inside the agentic workflow. Leave the key blank to run only the two offline cases. Providing a Gemini or OpenAI key and clicking **Run four cases** performs two calls so the direct and RAG-assisted candidates remain separate. The model cases retain non-null rule fields and overlay usable model fields. The tab shows the original source pages next to all 19 fields from all four candidates, adds field-level judge decisions, accepts source-verified values for real accuracy scoring, and can save the reviewed result to provider memory followed by an immediate FAISS/LlamaIndex retrieval proof. The key is not stored in the result artifact.
 
@@ -287,7 +287,7 @@ Main views:
 - **Overview**: processing queue, status, completion, and errors.
 - **Import Invoices**: upload invoices, optionally provide Gemini API key/model, run OCR and Gemini PDF extraction.
 - **Manual Review**: inspect fields, completion %, validation errors, PDF preview, Gemini second-pass summary, and save corrections.
-- **Experimental Agentic A/B Test** (inside Manual Review): compare the current deterministic Plan A with coded-agent Plan B, inspect changed fields and routing decisions, optionally request an advisory LLM judge result in Gradio, then record a human accuracy verdict. The experiment does not alter the reviewed CSV or provider memory.
+- **Experimental Agentic A/B Test** (inside Manual Review): compare the July OCR + direct LLM Plan A with OCR + LLM inside coded-agent Plan B, inspect changed fields and routing decisions, optionally request an advisory LLM judge result in Gradio, then record a human accuracy verdict. The experiment does not alter the reviewed CSV or provider memory.
 - **RAG Context**: selected invoice details, compact provider context, validation state, Gemini summary, and OCR text.
 - **Provider Memory**: provider-wide tips, OCR corrections, feedback, examples, and validation history.
 - **Invoice Fields**: required schema reference.
