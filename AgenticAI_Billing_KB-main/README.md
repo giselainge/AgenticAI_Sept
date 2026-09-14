@@ -32,6 +32,16 @@ See [the assessment requirements review](docs/requirements_review.md) for implem
 |-- requirements.txt
 |-- .env.example
 |-- .gitignore
+|-- .dockerignore
+|-- Dockerfile
+|-- docker-compose.yaml
+|-- deploy/
+|   |-- publish_to_iseg.ps1
+|   |-- aws/
+|       |-- deploy.ps1
+|       |-- status.ps1
+|       |-- destroy.ps1
+|       |-- ephemeral-stack.yaml
 |-- scripts/
 |   |-- dashboard.py
 |   |-- ocr_text_extraction.py
@@ -128,7 +138,7 @@ pip install uv
 
 3. Clone project code:
 ```bash
-git clone https://github.com/orgs/KMLAIOps/repositories/AgenticAI_Billing_KB.git  .
+git clone https://github.com/orgs/<your-org>/repositories/AgenticAI_Billing_KB.git  .
 
 ```
 
@@ -335,7 +345,22 @@ The tests mock Gemini API calls and do not call the real API.
 
 ## Docker And API
 
-The Dockerfile and `docker-compose.yaml` run the lightweight FastAPI app in `llm/main.py` on port `8000`. That API exposes health/root endpoints only; it is not the review dashboard. Use `python scripts\dashboard.py` for the local invoice review UI on port `8501`.
+The multi-stage Docker image includes Portuguese/English Tesseract, OCRmyPDF runtime tools, a non-root user, a read-only application filesystem, and health checks. Compose runs two services from the same image:
+
+- FastAPI health service: `http://127.0.0.1:8000/health`
+- Invoice dashboard: `http://127.0.0.1:8501/`
+
+Create local writable directories and start both services:
+
+```powershell
+New-Item -ItemType Directory -Force data, runtime
+docker compose up --build -d
+docker compose ps
+```
+
+`data/` holds invoice inputs and generated artifacts. `runtime/` holds ignored provider memory, vector indexes, and model caches. Compose binds both ports to localhost unless `BIND_ADDRESS` is explicitly changed. The API on port 8000 is still a health/root service; it is not an OpenAI-compatible `/v1` model server.
+
+For the temporary self-deleting EC2 deployment, AWS SSO setup, old endpoint check, early deletion, and safe nested-repository publication workflow, see [deploy/aws/README.md](deploy/aws/README.md).
 
 
 ## Extraction Schema
@@ -397,4 +422,3 @@ uv python rag\adaptive_rag.py retrieve --text-file data\data_txt\telecom_05.txt 
 
 The Gemini second pass asks the vector store for matching provider-memory snippets when OCR text, provider, and invoice type are available. If vector-store dependencies are not installed or the index has not been built, the project falls back to the JSON provider memory so local tests and review can still run.
 # AgenticAI_Billing_KB
-

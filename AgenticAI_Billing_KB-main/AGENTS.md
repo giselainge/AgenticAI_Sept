@@ -58,11 +58,14 @@ Do not introduce a `src/` layout unless the user explicitly requests it.
 - `A_B_test.md`: Plan A/Plan B experiment architecture, agent responsibilities, and interaction model.
 - `AGENTS.md`: project memory and coding conventions.
 - `.gitignore`: local/generated artifact ignore rules.
+- `.dockerignore`: excludes secrets, invoice data, runtime memory, caches, tests, and documentation from container build context.
 - `.env.example`: placeholder environment configuration only; never store live keys.
 - `scripts/`: runnable entry-point scripts.
 - `llm/agent/` and `llm/api/`: mirrored typed LLM model/schema structure used by `scripts/second_pass_llm.py`.
 - `vector_store/`: FAISS/LlamaIndex vector-store package for provider-memory retrieval.
 - `docs/workflow_graph.md`: Mermaid workflow diagram showing source, trackable invoice data, local runtime memory, generated outputs, review, tests, logs, and documentation boundaries.
+- `deploy/aws/`: ephemeral CloudFormation/SSM deployment, status, destruction, and operating instructions.
+- `deploy/publish_to_iseg.ps1`: safe nested-subtree publication helper; it must not force-push or publish a dirty worktree.
 - `requirements.txt`: Python dependencies.
 - `tests/`: pytest tests and smoke tests.
 - `docs/`: project notes and supporting documentation that are not runtime entry points.
@@ -365,7 +368,9 @@ When editing dashboard code, preserve path safety checks for PDF serving and upl
 
 ## Docker And API Runtime
 
-`Dockerfile` and `docker-compose.yaml` run the lightweight FastAPI app in `llm/main.py` on port `8000`. That containerized API is separate from the local review dashboard in `scripts/dashboard.py`, which runs on port `8501`.
+`Dockerfile` is a multi-stage, non-root runtime containing required local OCR tools. `docker-compose.yaml` runs the lightweight FastAPI health service on port `8000` and the review dashboard on port `8501` from the same image. Both persist `/app/data` and `/app/runtime`; neither container should write application code. The API is not an OpenAI-compatible inference server.
+
+The AWS deployment under `deploy/aws/` is deliberately ephemeral. It must use an IP-restricted security group, SSM instead of SSH, no uploaded LLM secrets or invoice data, and both scheduled and manual stack-deletion paths. It deploys the invoice application only, not the historical Qwen GPU endpoint. Do not claim an AWS deployment passed unless it was run with an authenticated profile and its stack deletion was verified.
 
 ## Testing And Verification
 

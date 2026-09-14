@@ -34,6 +34,7 @@ from invoice_parser.paths import (
 )
 from invoice_parser.schema import FIELDNAMES
 from rag.adaptive_rag import (
+    DEFAULT_KB as RAG_DEFAULT_KB,
     FIELD_NAMES as RAG_FIELD_NAMES,
     canonical_provider,
     ensure_provider,
@@ -50,7 +51,7 @@ from rag.adaptive_rag import (
 
 
 DEFAULT_CSV = DEFAULT_OUTPUT_DIR / "invoice_structured_fields.csv"
-DEFAULT_KB = PROJECT_ROOT / "rag" / "knowledge_base.json"
+DEFAULT_KB = RAG_DEFAULT_KB
 NULL_VALUES = {"", "null", "none", "nan"}
 AUTO_APPROVAL_MIN_VALIDATED = 5
 INVOICE_TYPES = {"electricity", "water", "natural gas", "telecom"}

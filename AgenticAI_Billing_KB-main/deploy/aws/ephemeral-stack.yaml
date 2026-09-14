@@ -1,0 +1,323 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Ephemeral EC2 deployment for the Agentic Invoice Parser. The stack schedules
+  its own deletion and uses Systems Manager instead of SSH.
+
+Parameters:
+  AllowedCidr:
+    Type: String
+    Description: Public IPv4 CIDR allowed to reach ports 8000 and 8501.
+    AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
+  ExpiresAt:
+    Type: String
+    Description: UTC deletion time in yyyy-MM-ddTHH:mm:ss format.
+    AllowedPattern: "^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$"
+  InstanceType:
+    Type: String
+    Default: t3.large
+    AllowedValues:
+      - t3.large
+      - t3.xlarge
+    Description: CPU instance for the invoice application; this does not host Qwen 9B.
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.42.1.0/24
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+  ApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Restrict invoice API and dashboard to the deployer's public IP.
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - Description: FastAPI health and metadata service
+          IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: !Ref AllowedCidr
+        - Description: Invoice review dashboard
+          IpProtocol: tcp
+          FromPort: 8501
+          ToPort: 8501
+          CidrIp: !Ref AllowedCidr
+      VpcId: !Ref Vpc
+
+  DeploymentBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: RemoveDeploymentBundle
+            Status: Enabled
+            ExpirationInDays: 1
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: expires-at
+          Value: !Ref ExpiresAt
+
+  DeploymentBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DeploymentBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt DeploymentBucket.Arn
+              - !Sub "${DeploymentBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadDeploymentBundle
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub "${DeploymentBucket.Arn}/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt DeploymentBucket.Arn
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  ApplicationInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: DefaultRoute
+    Properties:
+      IamInstanceProfile: !Ref InstanceProfile
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+      InstanceType: !Ref InstanceType
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref ApplicationSecurityGroup
+          SubnetId: !Ref PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: 40
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-app"
+        - Key: expires-at
+          Value: !Ref ExpiresAt
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          dnf install -y docker
+          systemctl enable --now docker
+          systemctl enable --now amazon-ssm-agent
+          mkdir -p /opt/billing/app /opt/billing/data /opt/billing/runtime
+          chown -R 10001:10001 /opt/billing/data /opt/billing/runtime
+
+  CleanupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DeleteEphemeralStack
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketVersions
+                Resource: !GetAtt DeploymentBucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                Resource: !Sub "${DeploymentBucket.Arn}/*"
+              - Effect: Allow
+                Action: cloudformation:DeleteStack
+                Resource: !Ref AWS::StackId
+
+  CleanupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt CleanupRole.Arn
+      Timeout: 300
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref DeploymentBucket
+          STACK_NAME: !Ref AWS::StackName
+      Code:
+        ZipFile: |
+          import os
+          import boto3
+
+          s3 = boto3.client("s3")
+          cloudformation = boto3.client("cloudformation")
+
+          def handler(event, context):
+              bucket = os.environ["BUCKET_NAME"]
+              for page in s3.get_paginator("list_object_versions").paginate(Bucket=bucket):
+                  objects = [
+                      {"Key": item["Key"], "VersionId": item["VersionId"]}
+                      for group in ("Versions", "DeleteMarkers")
+                      for item in page.get(group, [])
+                  ]
+                  if objects:
+                      s3.delete_objects(Bucket=bucket, Delete={"Objects": objects, "Quiet": True})
+              for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket):
+                  objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]
+                  if objects:
+                      s3.delete_objects(Bucket=bucket, Delete={"Objects": objects, "Quiet": True})
+              cloudformation.delete_stack(StackName=os.environ["STACK_NAME"])
+              return {"deletion_requested": True}
+
+  CleanupLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${CleanupFunction}"
+      RetentionInDays: 1
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeCleanup
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt CleanupFunction.Arn
+
+  CleanupSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      ActionAfterCompletion: DELETE
+      Description: !Sub "Delete ${AWS::StackName} at ${ExpiresAt} UTC"
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      ScheduleExpression: !Sub "at(${ExpiresAt})"
+      ScheduleExpressionTimezone: UTC
+      State: ENABLED
+      Target:
+        Arn: !GetAtt CleanupFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+
+Outputs:
+  InstanceId:
+    Value: !Ref ApplicationInstance
+  DeploymentBucketName:
+    Value: !Ref DeploymentBucket
+  ApiUrl:
+    Value: !Sub "http://${ApplicationInstance.PublicDnsName}:8000"
+  DashboardUrl:
+    Value: !Sub "http://${ApplicationInstance.PublicDnsName}:8501"
+  ExpiresAtUtc:
+    Value: !Ref ExpiresAt

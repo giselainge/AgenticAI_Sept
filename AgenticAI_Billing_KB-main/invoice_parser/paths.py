@@ -1,8 +1,9 @@
+import os
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_ROOT = PROJECT_ROOT / "data"
+DATA_ROOT = Path(os.getenv("INVOICE_DATA_ROOT", str(PROJECT_ROOT / "data")))
 DEFAULT_RAW_DIR = DATA_ROOT / "data_raw"
 DEFAULT_PDF_DIR = DATA_ROOT / "data_pdf"
 DEFAULT_TEXT_DIR = DATA_ROOT / "data_txt"
@@ -10,7 +11,7 @@ DEFAULT_OUTPUT_DIR = DATA_ROOT / "data_processed"
 DEFAULT_REPORTS_DIR = DEFAULT_OUTPUT_DIR / "reports"
 DEFAULT_LLM_SECOND_PASS_DIR = DEFAULT_OUTPUT_DIR / "llm_second_pass"
 DEFAULT_AGENTIC_AB_DIR = DEFAULT_OUTPUT_DIR / "agentic_ab_tests"
-DEFAULT_VECTOR_STORE_DIR = DEFAULT_OUTPUT_DIR / "vector_store"
+DEFAULT_VECTOR_STORE_DIR = Path(os.getenv("VECTOR_STORE_DIR", str(DEFAULT_OUTPUT_DIR / "vector_store")))
 
 
 def project_data_root() -> Path:

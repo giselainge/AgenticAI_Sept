@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import logging
+import os
 import re
 import sys
 import unicodedata
@@ -22,7 +23,7 @@ from invoice_parser.providers import canonical_provider, provider_display_name
 from llm.agent.models import LlmRagContext, RagSnippet
 
 
-DEFAULT_KB = PROJECT_ROOT / "rag" / "knowledge_base.json"
+DEFAULT_KB = Path(os.getenv("RAG_KB_PATH", str(PROJECT_ROOT / "rag" / "knowledge_base.json")))
 DEFAULT_VALIDATED_CSV = DEFAULT_OUTPUT_DIR / "invoice_structured_fields.csv"
 DEFAULT_VECTOR_INDEX = DEFAULT_VECTOR_STORE_DIR
 FIELD_NAMES = [

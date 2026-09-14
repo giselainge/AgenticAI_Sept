@@ -9,6 +9,7 @@ dashboard_stdout.log
 dashboard_stderr.log
 *.log
 logs/
+runtime/
 rag/knowledge_base.json
 rag/last_retrieval_context.json
 
