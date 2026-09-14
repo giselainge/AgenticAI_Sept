@@ -409,7 +409,10 @@ def should_run_enhanced_ocr(quality: dict[str, Any], threshold: float = DEFAULT_
 def tool_missing_warnings() -> list[str]:
     warnings = []
     if shutil.which("ocrmypdf") is None:
-        warnings.append("OCRmyPDF is not installed or not on PATH.")
+        if shutil.which("pdftoppm") is not None:
+            warnings.append("OCRmyPDF is unavailable; using the local Poppler + Tesseract PDF fallback.")
+        else:
+            warnings.append("OCRmyPDF and pdftoppm are not installed or not on PATH.")
     if shutil.which("tesseract") is None:
         warnings.append("Tesseract is not installed or not on PATH.")
     return warnings
@@ -579,6 +582,91 @@ def run_tesseract_image_pass(
         result.quality or {},
         text_output_dir,
         searchable_pdf,
+    )
+    result.raw_text_file = raw_file
+    result.cleaned_text_file = cleaned_file
+    result.diagnostics_file = diagnostics_file
+    return result
+
+
+def render_pdf_pages(input_pdf: Path, work_dir: Path, *, label: str) -> list[Path]:
+    """Render a scanned PDF locally when OCRmyPDF is unavailable."""
+    renderer = shutil.which("pdftoppm")
+    if renderer is None:
+        raise RuntimeError("Neither OCRmyPDF nor the pdftoppm PDF renderer is available.")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    prefix = work_dir / f"{input_pdf.stem}_{label}_page"
+    for stale in work_dir.glob(f"{prefix.name}-*.png"):
+        stale.unlink()
+    try:
+        completed = subprocess.run(
+            [renderer, "-png", "-r", str(OCR_DPI), str(input_pdf), str(prefix)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=OCR_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("PDF page rendering timed out.") from None
+    if completed.returncode != 0:
+        raise RuntimeError(f"pdftoppm failed with exit code {completed.returncode}.")
+
+    def page_number(path: Path) -> int:
+        match = re.search(r"-(\d+)\.png$", path.name)
+        return int(match.group(1)) if match else 0
+
+    pages = sorted(work_dir.glob(f"{prefix.name}-*.png"), key=page_number)
+    if not pages:
+        raise RuntimeError("pdftoppm did not render any PDF pages.")
+    return pages
+
+
+def run_tesseract_pdf_pass(
+    source_file: Path,
+    input_pdf: Path,
+    text_output_dir: Path,
+    work_dir: Path,
+    *,
+    enhanced: bool,
+) -> OcrPassResult:
+    """OCR all rendered PDF pages with the same bounded image treatment used locally."""
+    from PIL import Image, ImageFilter, ImageOps
+
+    label = "tesseract_pdf_enhanced" if enhanced else "tesseract_pdf_baseline"
+    pages = render_pdf_pages(input_pdf, work_dir, label=label)
+    available_languages = set(pytesseract.get_languages(config=""))
+    languages = "+".join(language for language in OCR_LANGUAGES if language in available_languages)
+    page_texts: list[str] = []
+    for page_path in pages:
+        with Image.open(page_path) as opened:
+            image = ImageOps.exif_transpose(opened).convert("RGB")
+            if enhanced:
+                image = ImageOps.autocontrast(ImageOps.grayscale(image), cutoff=1)
+                image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=180, threshold=3))
+            page_texts.append(
+                pytesseract.image_to_string(
+                    image,
+                    lang=languages or None,
+                    config=f"--oem 1 --psm 3 --dpi {OCR_DPI} -c preserve_interword_spaces=1",
+                )
+            )
+    raw_text = "\n\n".join(page_texts)
+    result = build_ocr_pass_result(
+        label,
+        source_file,
+        input_pdf,
+        raw_text,
+        page_texts,
+        text_output_dir,
+    )
+    raw_file, cleaned_file, diagnostics_file = save_pass_text_files(
+        label,
+        source_file,
+        result.raw_text,
+        result.cleaned_text,
+        result.quality or {},
+        text_output_dir,
+        input_pdf,
     )
     result.raw_text_file = raw_file
     result.cleaned_text_file = cleaned_file
@@ -1044,11 +1132,63 @@ def process_file(
     use_enhanced = force_enhanced and not baseline_only
     ocr_ok, ocr_errors = run_ocrmypdf(input_pdf, ocr_pdf, enhanced=use_enhanced)
     if not ocr_ok:
-        result.baseline.errors.extend(ocr_errors)
-        result.errors.extend(ocr_errors)
-        result.errors.append("OCR failed completely; no OCR pass produced usable text.")
-        update_review_flags(result, {})
-        return result
+        try:
+            baseline_pass = run_tesseract_pdf_pass(
+                source,
+                input_pdf,
+                output_dirs["text"],
+                work_dir / "rendered_pages",
+                enhanced=False,
+            )
+            result.baseline = baseline_pass
+            selected_pass = baseline_pass
+            selected_label = baseline_pass.method or "tesseract_pdf_baseline"
+            baseline_quality = baseline_pass.quality or {}
+            if not baseline_only and (
+                force_enhanced or should_run_enhanced_ocr(baseline_quality, ocr_quality_threshold)
+            ):
+                enhanced_pass = run_tesseract_pdf_pass(
+                    source,
+                    input_pdf,
+                    output_dirs["text"],
+                    work_dir / "rendered_pages",
+                    enhanced=True,
+                )
+                result.enhanced = enhanced_pass
+                comparison = compare_ocr_results(asdict(baseline_pass), asdict(enhanced_pass))
+                comparison_path = output_dirs["text"] / f"{source.stem}_ocr_comparison.txt"
+                write_text_file(
+                    comparison_path,
+                    comparison_text(source, baseline_pass, enhanced_pass, comparison),
+                )
+                result.ocr_comparison_file = str(comparison_path)
+                result.warnings.append(comparison["reason"])
+                if comparison["selected_result"] == "enhanced_ocr":
+                    selected_pass = enhanced_pass
+                    selected_label = enhanced_pass.method or "tesseract_pdf_enhanced"
+            result.warnings.extend(f"OCRmyPDF fallback reason: {message}" for message in ocr_errors)
+            quality = selected_pass.quality or {}
+            write_text_file(
+                selected_path,
+                selected_text_output(source, selected_label, quality, selected_label, selected_pass.cleaned_text),
+            )
+            result.extraction_method = selected_label
+            result.selected_text = selected_pass.cleaned_text
+            result.selected_text_file = str(selected_path)
+            result.raw_text_file = selected_pass.raw_text_file
+            result.cleaned_text_file = selected_pass.cleaned_text_file
+            result.diagnostics_file = selected_pass.diagnostics_file
+            result.searchable_pdf = str(input_pdf)
+            result.quality_score = float(quality.get("score", 0.0))
+            update_review_flags(result, quality)
+            return result
+        except Exception as exc:
+            result.baseline.errors.extend(ocr_errors)
+            result.errors.extend(ocr_errors)
+            result.errors.append(f"PDF Tesseract fallback failed: {exc}")
+            result.errors.append("OCR failed completely; no OCR pass produced usable text.")
+            update_review_flags(result, {})
+            return result
 
     ocr_pdf.replace(input_pdf)
 
