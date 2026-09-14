@@ -115,6 +115,18 @@ def test_deployment_transfers_the_tested_image_without_secrets_or_private_data()
     assert "Refusing a public-to-everyone deployment" in deploy_script
 
 
+def test_aws_deployment_uses_billing_assessment_name() -> None:
+    deployment_scripts = [
+        (PROJECT_ROOT / "deploy" / "aws" / script_name).read_text(encoding="utf-8")
+        for script_name in ("deploy.ps1", "status.ps1", "destroy.ps1")
+    ]
+
+    assert all('[string]$Profile = "billing-assessment"' in script for script in deployment_scripts)
+    assert all('[string]$StackName = "billing-assessment"' in script for script in deployment_scripts)
+    assert all("agentic-invoice-demo" not in script for script in deployment_scripts)
+    assert '[ValidateRange(1, 12)][int]$Hours = 4' in deployment_scripts[0]
+
+
 def test_local_parity_script_builds_and_checks_the_same_image() -> None:
     script = (PROJECT_ROOT / "deploy" / "local.ps1").read_text(encoding="utf-8")
 

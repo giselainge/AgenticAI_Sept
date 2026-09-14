@@ -1,9 +1,9 @@
 [CmdletBinding()]
 param(
-    [string]$Profile = "billing-demo",
+    [string]$Profile = "billing-assessment",
     [string]$Region = "eu-west-1",
-    [string]$StackName = "agentic-invoice-demo",
-    [ValidateRange(1, 12)][int]$Hours = 3,
+    [string]$StackName = "billing-assessment",
+    [ValidateRange(1, 12)][int]$Hours = 4,
     [ValidateSet("t3.large", "t3.xlarge")][string]$InstanceType = "t3.large",
     [string]$AllowedCidr = "",
     [ValidatePattern("^[a-z0-9][a-z0-9._/-]*(?::[a-zA-Z0-9][a-zA-Z0-9._-]*)?$")]
@@ -81,7 +81,7 @@ try {
         --template-file $template `
         --capabilities CAPABILITY_NAMED_IAM `
         --parameter-overrides "AllowedCidr=$AllowedCidr" "ExpiresAt=$expiresAt" "InstanceType=$InstanceType" `
-        --tags "project=agentic-invoice-parser" "temporary=true" "expires-at=$expiresAt" `
+        --tags "project=billing-assessment" "temporary=true" "expires-at=$expiresAt" `
         --no-cli-pager
 
     $outputsJson = & aws cloudformation describe-stacks --profile $Profile --region $Region --stack-name $StackName --query "Stacks[0].Outputs" --output json --no-cli-pager

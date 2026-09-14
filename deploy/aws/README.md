@@ -1,6 +1,6 @@
-# Temporary AWS deployment
+# Billing assessment AWS deployment
 
-This package deploys the invoice application for a short assessment demo without using the AWS console after login. It creates one CloudFormation stack containing a VPC, public subnet, restricted security group, Amazon Linux 2023 EC2 instance, encrypted EBS volume, private S3 deployment bucket, IAM roles, and an EventBridge Scheduler/Lambda cleanup path.
+This package deploys the invoice application for a short billing assessment without using the AWS console after login. It creates one CloudFormation stack containing a VPC, public subnet, restricted security group, Amazon Linux 2023 EC2 instance, encrypted EBS volume, private S3 deployment bucket, IAM roles, and an EventBridge Scheduler/Lambda cleanup path.
 
 The instance is managed with Systems Manager; port 22 is never opened. Ports 7860, 8000, and 8501 are restricted to the public `/32` address detected by the deployment script. The cleanup schedule empties the deployment bucket and requests deletion of the complete stack after 1–12 hours. `destroy.ps1` provides an explicit early-deletion path.
 
@@ -23,7 +23,7 @@ No Gemini key is uploaded. Enter a temporary key in the dashboard when running G
 Install AWS CLI v2, then configure an IAM Identity Center profile:
 
 ```powershell
-aws configure sso --profile billing-demo
+aws configure sso --profile billing-assessment
 ```
 
 Enter the access-portal URL supplied for the account when prompted:
@@ -37,8 +37,8 @@ AWS CLI configuration expects the URL without the browser fragment (`#/`). The S
 Authenticate before deployment:
 
 ```powershell
-aws sso login --profile billing-demo
-aws sts get-caller-identity --profile billing-demo
+aws sso login --profile billing-assessment
+aws sts get-caller-identity --profile billing-assessment
 ```
 
 An SSO/browser or device-code login is unavoidable: code cannot obtain permission from the portal URL alone.
@@ -63,12 +63,12 @@ From the project root:
 
 The command builds `agentic-ai-billing-agent:local`, starts all three services, verifies their local endpoints, and prints the image ID and OCR quality fingerprint. Test OCR + rules and the Gemini-enabled cases in Gradio before continuing. Stop the containers with `.\deploy\local.ps1 -Down` when desired; the image remains available for the AWS transfer.
 
-## Deploy the tested image for three hours
+## Deploy the tested image for four hours
 
 From the project root:
 
 ```powershell
-.\deploy\aws\deploy.ps1 -Profile billing-demo -Region eu-west-1 -Hours 3
+.\deploy\aws\deploy.ps1 -Profile billing-assessment -Region eu-west-1 -Hours 4
 ```
 
 The script:
@@ -87,13 +87,13 @@ Use `-AllowedCidr '203.0.113.10/32'` if automatic IP detection is unavailable. I
 ## Check status
 
 ```powershell
-.\deploy\aws\status.ps1 -Profile billing-demo -Region eu-west-1
+.\deploy\aws\status.ps1 -Profile billing-assessment -Region eu-west-1
 ```
 
 ## Delete early and verify deletion
 
 ```powershell
-.\deploy\aws\destroy.ps1 -Profile billing-demo -Region eu-west-1
+.\deploy\aws\destroy.ps1 -Profile billing-assessment -Region eu-west-1
 ```
 
 The command empties the temporary bucket, deletes the stack, waits for `stack-delete-complete`, and fails visibly if CloudFormation cannot finish. Check status afterward. CloudFormation cannot delete resources created manually outside this stack.

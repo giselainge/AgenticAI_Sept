@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$Profile = "billing-demo",
+    [string]$Profile = "billing-assessment",
     [string]$Region = "eu-west-1",
-    [string]$StackName = "agentic-invoice-demo"
+    [string]$StackName = "billing-assessment"
 )
 
 $ErrorActionPreference = "Stop"
