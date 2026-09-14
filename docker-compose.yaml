@@ -13,8 +13,9 @@ x-billing-service: &billing-service
     JUDGE_MODEL: ${JUDGE_MODEL:-}
     INVOICE_DATA_ROOT: /app/data
     INVOICE_RUNTIME_ROOT: /app/runtime
-    RAG_KB_PATH: /app/runtime/knowledge_base.json
+    RAG_DB_PATH: /app/runtime/knowledge_base.sqlite3
     VECTOR_STORE_DIR: /app/runtime/vector_store
+    TORCH_EMBEDDING_DEVICE: ${TORCH_EMBEDDING_DEVICE:-cpu}
     OCR_LANGUAGES: ${OCR_LANGUAGES:-por+eng}
     OCR_DPI: ${OCR_DPI:-300}
     OCR_TIMEOUT_SECONDS: ${OCR_TIMEOUT_SECONDS:-900}

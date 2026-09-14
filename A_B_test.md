@@ -40,9 +40,9 @@ The supervisor is [`PlanBOrchestrator`](llm/agent/workflow.py). It runs the agen
 | [`ValidationAgent`](llm/agent/workflow.py) | Checks required fields, real calendar dates, date ordering, finite monetary values, and `subtotal + VAT ≈ total`. | Deterministic critic agent |
 | [`ReviewRoutingAgent`](llm/agent/workflow.py) | Chooses unsupported rejection, manual review, or automatic-approval eligibility. It requires five distinct prior approved invoices for automation. | Policy/router agent |
 
-The primary experiment compares the complete July OCR + direct LLM pipeline with the agentic OCR + LLM pipeline. Deterministic OCR + rules and OCR + agentic rules remain visible as diagnostic ablations in the four-case tab; they are not presented as Plan A and Plan B.
+The experiment compares the complete July OCR + direct LLM pipeline with the agentic OCR + LLM pipeline.
 
-All four candidates pass through the same post-processor before validation or completeness scoring. It normalizes dates, currencies, monetary values, quantities, units, VAT identifiers and supported categories. It rejects identity/address values containing financial labels, amounts or currency markers, records only the rejected field names in `extraction_warnings`, and gives rejected values no retrieval credit.
+Both candidates pass through the same post-processor before validation or completeness scoring. It normalizes dates, currencies, monetary values, quantities, units, VAT identifiers and supported categories. It rejects identity/address values containing financial labels, amounts or currency markers, records only the rejected field names in `extraction_warnings`, and gives rejected values no retrieval credit.
 
 The interaction pattern is a **shared-state blackboard with sequential handoffs**:
 
@@ -75,18 +75,16 @@ The judge supports three connectors. **Gemini** needs a model name plus a Gemini
 
 ## Local Gradio test interface
 
-Run `uv run python scripts\gradio_app.py` and open `http://127.0.0.1:7860`. The interface accepts an invoice PDF or image, runs the built-in OCR pipeline, shows retrieval percentages and all 19 required fields side by side, exposes OCR/post-processing diagnostics and a sanitized stage log, and shows the five-agent trace. **Retrieve fields with GPT / Gemini** runs Plan A (July OCR + direct LLM) and Plan B (the same OCR/model inside the agent workflow). **Run no-LLM rule ablations** is a diagnostic control. The judge makes a separate external call only after the user requests it. The server rejects non-loopback host arguments.
+Run `uv run python scripts\gradio_app.py` and open `http://127.0.0.1:7860`. The interface accepts an invoice PDF or image, runs the built-in OCR pipeline, shows retrieval percentages and all 19 required fields side by side, exposes OCR/post-processing diagnostics and a sanitized stage log, and shows the five-agent trace. **Retrieve fields with GPT / Gemini** runs Plan A (July OCR + direct LLM) and Plan B (the same OCR/model inside the agent workflow). The judge makes a separate external call only after the user requests it. The server rejects non-loopback host arguments.
 
-The **Four-case assessment** tab keeps these configurations distinct:
+The **Source-verified A/B assessment** tab keeps these configurations distinct:
 
 | Case | Extraction | Agent workflow | Provider RAG |
 | --- | --- | --- | --- |
-| `ocr_rules` | Diagnostic ablation: frozen July OCR + rules | No | No |
 | `ocr_llm` | **Plan A:** frozen July OCR + direct Gemini/OpenAI extraction | No | No |
-| `ocr_agentic` | Diagnostic ablation: frozen July OCR + rules | Five-agent workflow | Yes, retrieved but not consumed by the rules extractor |
 | `ocr_llm_agentic` | **Plan B:** frozen July OCR + Gemini/OpenAI extraction | Five-agent workflow | Yes, supplied to the selected provider |
 
-With the provider key blank, the local cases run and the two model cases are explicitly unavailable. Pasting a key and clicking **Run four cases** makes two extraction calls to the selected provider. Both model cases retain valid deterministic fields when the model returns `null`, then overlay non-null model values. The tab renders the source pages next to a 19-row table containing all four candidates and the judge's field decisions. A reviewer enters exact source values (or `<absent>`), and the application calculates accuracy against that human ground truth. Field retrieval percentage measures non-null completeness and is not an accuracy claim.
+Pasting a key and clicking **Run A/B assessment** makes two extraction calls to the selected provider. Both plans retain valid July fields when the model returns `null`, then overlay non-null model values. The tab renders the source pages next to a 19-row table containing both candidates and the judge's field decisions. A reviewer enters exact source values (or `<absent>`), and the application calculates accuracy against that human ground truth. Field retrieval percentage measures non-null completeness and is not an accuracy claim.
 
 After verification, **Save reviewed fields to KB and test retrieval** overlays the source-verified values on the selected candidate, writes the reviewed example into the matching provider memory, rebuilds the local FAISS/LlamaIndex index, queries it, and reports whether the exact saved example was retrieved. This write occurs only on that explicit action. API keys are never written to the artifact or knowledge base.
 

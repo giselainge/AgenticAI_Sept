@@ -8,9 +8,10 @@ The instance is managed with Systems Manager; port 22 is never opened. Ports 786
 
 - `http://<temporary-host>:8000/ready`: the FastAPI readiness and OCR-profile report.
 - `http://<temporary-host>:8501/`: the invoice import and review dashboard.
-- `http://<temporary-host>:7860/`: the Gradio A/B and four-case lab.
+- `http://<temporary-host>:7860/`: the Gradio source-verified A/B lab.
 - Three containers loaded from the exact locally tested hardened Docker image.
-- Persistent application data only for the life of the EC2/EBS stack.
+- A transactional SQLite provider-memory database at `/opt/billing/runtime/knowledge_base.sqlite3`,
+  persisted on the encrypted EC2 volume only for the life of the stack.
 
 No Gemini key is uploaded. Enter a temporary key in the dashboard when running Gemini or Plan B. The package does not deploy `Qwen/Qwen3.5-9B`: the old `/v1` address was an OpenAI-compatible model service, while this repository currently calls Gemini directly and contains no Qwen client. Hosting a 9B model requires a separate GPU design, model licensing review, and cost controls.
 

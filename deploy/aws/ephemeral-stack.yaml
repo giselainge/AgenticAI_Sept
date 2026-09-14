@@ -78,7 +78,7 @@ Resources:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
       SecurityGroupIngress:
-        - Description: Gradio A/B and four-case lab
+        - Description: Gradio source-verified A/B lab
           IpProtocol: tcp
           FromPort: 7860
           ToPort: 7860
@@ -326,5 +326,8 @@ Outputs:
     Value: !Sub "http://${ApplicationInstance.PublicDnsName}:8501"
   GradioUrl:
     Value: !Sub "http://${ApplicationInstance.PublicDnsName}:7860"
+  KnowledgeBaseDatabasePath:
+    Description: SQLite provider-memory database on the encrypted EC2 root volume.
+    Value: /opt/billing/runtime/knowledge_base.sqlite3
   ExpiresAtUtc:
     Value: !Ref ExpiresAt

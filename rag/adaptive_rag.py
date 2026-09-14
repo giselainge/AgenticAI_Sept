@@ -20,7 +20,7 @@ if str(PROJECT_ROOT_PATH) not in sys.path:
 from invoice_parser.paths import DEFAULT_KB_PATH, DEFAULT_OUTPUT_DIR, DEFAULT_VECTOR_STORE_DIR
 from invoice_parser.postprocess import sanitize_invoice_row
 from invoice_parser.schema import FIELDNAMES, NULL_VALUE
-from invoice_parser.providers import canonical_provider, provider_display_name
+from invoice_parser.providers import PROVIDER_NAMES, canonical_provider, provider_display_name
 from llm.agent.models import LlmRagContext, RagSnippet
 from rag.sqlite_store import is_sqlite_path, load_kb_database, save_kb_database
 
@@ -35,6 +35,22 @@ FIELD_NAMES = [
 ]
 
 logger = logging.getLogger(__name__)
+
+BOOTSTRAP_PROVIDER_CATEGORIES = {
+    "edp": ("electricity",),
+    "eem": ("electricity",),
+    "epal": ("water",),
+    "eamb": ("water",),
+    "arm": ("water",),
+    "galp": ("natural gas", "electricity"),
+    "vodafone_pt": ("telecom",),
+    "vodafone_tr": ("telecom",),
+}
+BOOTSTRAP_TIPS = [
+    "Read each value from its labeled invoice section; never infer identity or address fields from amounts.",
+    "Distinguish supplier and buyer tax identifiers by their surrounding labels and document blocks.",
+    "Use the amount explicitly labeled as the invoice total; validate subtotal plus VAT against total.",
+]
 
 
 def now_iso() -> str:
@@ -85,6 +101,35 @@ def ensure_provider(kb: dict[str, Any], provider_id: str, provider_name: str | N
         if provider_name not in provider["aliases"]:
             provider["aliases"].append(provider_name)
     return provider
+
+
+def bootstrap_provider_memory(kb: dict[str, Any] | None = None) -> tuple[dict[str, Any], bool]:
+    """Add safe provider/layout guidance so a fresh local or AWS database is useful."""
+    memory = kb or empty_kb()
+    changed = False
+    for provider_id, categories in BOOTSTRAP_PROVIDER_CATEGORIES.items():
+        existed = provider_id in memory.setdefault("providers", {})
+        provider = ensure_provider(memory, provider_id, PROVIDER_NAMES[provider_id])
+        if not existed:
+            changed = True
+        for tip in BOOTSTRAP_TIPS:
+            if tip not in provider["provider_specific_extraction_tips"]:
+                provider["provider_specific_extraction_tips"].append(tip)
+                changed = True
+        for invoice_type in categories:
+            layout_id = f"{provider_id}:{invoice_type}"
+            if not any(item.get("layout_id") == layout_id for item in provider["known_invoice_layouts"]):
+                provider["known_invoice_layouts"].append(
+                    {
+                        "layout_id": layout_id,
+                        "provider_id": provider_id,
+                        "invoice_type": invoice_type,
+                        "fields_seen": [],
+                        "source": "built_in_provider_catalog",
+                    }
+                )
+                changed = True
+    return memory, changed
 
 
 def load_kb(kb_path: str | Path = DEFAULT_KB) -> dict[str, Any]:
@@ -140,7 +185,7 @@ def seed_from_extracted_csv(
     if not path.exists():
         raise FileNotFoundError(f"Validated invoice CSV does not exist: {path}")
 
-    kb = load_kb(kb_path)
+    kb, _ = bootstrap_provider_memory(load_kb(kb_path))
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         for raw_row in csv.DictReader(handle):
             row, _ = sanitize_invoice_row(raw_row)
@@ -186,10 +231,17 @@ def ensure_seeded_kb(
     csv_path: str | Path = DEFAULT_VALIDATED_CSV,
     kb_path: str | Path = DEFAULT_KB,
 ) -> dict[str, Any]:
-    kb = load_kb(kb_path)
-    if kb.get("providers") or not Path(csv_path).exists():
-        return kb
-    return seed_from_extracted_csv(csv_path, kb_path)
+    kb, changed = bootstrap_provider_memory(load_kb(kb_path))
+    has_observations = any(
+        provider.get("observed_invoices")
+        for provider in kb.get("providers", {}).values()
+    )
+    if Path(csv_path).exists() and not has_observations:
+        save_kb(kb, kb_path)
+        return seed_from_extracted_csv(csv_path, kb_path)
+    if changed:
+        save_kb(kb, kb_path)
+    return kb
 
 
 def record_validated_invoice(
@@ -480,7 +532,11 @@ def build_llm_rag_context(
     index_path: str | Path = DEFAULT_VECTOR_INDEX,
     use_vector_store: bool = True,
 ) -> list[LlmRagContext]:
-    if use_vector_store:
+    default_index_with_custom_kb = (
+        Path(index_path).resolve() == Path(DEFAULT_VECTOR_INDEX).resolve()
+        and Path(kb_path).resolve() != Path(DEFAULT_KB).resolve()
+    )
+    if use_vector_store and not default_index_with_custom_kb:
         try:
             from vector_store.base import VectorStoreDependencyError, retrieve_provider_memory_docs
 
@@ -500,7 +556,7 @@ def build_llm_rag_context(
             if vector_context:
                 return vector_context
         except VectorStoreDependencyError as exc:
-            logger.info("Vector store unavailable; falling back to JSON provider memory: %s", exc)
+            logger.info("Vector store unavailable; falling back to provider memory: %s", exc)
 
     context = build_extraction_context(
         query_text=query_text,

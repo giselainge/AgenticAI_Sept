@@ -63,7 +63,9 @@ See [the assessment requirements review](docs/requirements_review.md) for implem
 |   |   |-- schemas.py
 |-- rag/
 |   |-- adaptive_rag.py
-|   |-- knowledge_base.json              (generated/local, when provider memory exists)
+|   |-- sqlite_store.py                  (transactional SQLite persistence)
+|-- runtime/
+|   |-- knowledge_base.sqlite3           (generated/local, ignored)
 |   |-- last_retrieval_context.json      (generated/local, when retrieval is exported)
 |-- vector_store/
 |   |-- base.py                          (local Torch embedding + FAISS/LlamaIndex)
@@ -205,9 +207,9 @@ Portuguese and English Tesseract language data are required for comparable Portu
 
 Each A/B artifact records sanitized preprocessing metadata and stage decisions. It does not store the OCR text, model prompts, or API keys in the audit log. The structured plan rows still contain invoice fields and remain under the ignored local `data/` tree.
 
-The primary A/B action requires a request-only Gemini or OpenAI key because both Plan A and Plan B include model extraction. The diagnostic no-LLM button runs the two rule ablations locally. The uploaded invoice and OCR evidence are sent to the selected provider for both primary candidates; Plan B additionally sends matching provider context. The key is not written to the A/B artifact.
+The A/B action requires a request-only Gemini or OpenAI key because both Plan A and Plan B include model extraction. The uploaded invoice and OCR evidence are sent to the selected provider for both candidates; Plan B additionally sends matching provider context. The key is not written to the A/B artifact.
 
-The **Four-case assessment** tab compares OCR + rules, OCR + direct LLM, OCR + agentic rules, and OCR + LLM inside the agentic workflow. Leave the key blank to run only the two offline cases. Providing a Gemini or OpenAI key and clicking **Run four cases** performs two calls so the direct and RAG-assisted candidates remain separate. The model cases retain non-null rule fields and overlay usable model fields. The tab shows the original source pages next to all 19 fields from all four candidates, adds field-level judge decisions, accepts source-verified values for real accuracy scoring, and can save the reviewed result to provider memory followed by an immediate FAISS/LlamaIndex retrieval proof. The key is not stored in the result artifact.
+The **Source-verified A/B assessment** tab performs two calls so Plan A and the RAG-assisted Plan B remain separate. Both plans retain valid July fields when the model returns `null`, then overlay usable model fields. The tab shows the original source pages next to all 19 fields from both plans, adds field-level judge decisions, accepts source-verified values for real accuracy scoring, and can save the reviewed result to provider memory followed by an immediate FAISS/LlamaIndex retrieval proof. The key is not stored in the result artifact.
 
 The **Optional independent LLM judge** panel can compare both results with the OCR evidence through Gemini, the official OpenAI Responses API, or a user-configured OpenAI-compatible endpoint. It sends invoice text only after **Run LLM judge** is clicked and never replaces the human verdict. Select the same official provider to reuse the request-only extraction key; no base URL is needed for Gemini or OpenAI. A different model is preferable for the judge, but the same provider key can be used. For a separate OpenAI-compatible judge, configure:
 
@@ -368,7 +370,7 @@ The tests mock Gemini and OpenAI API calls and do not call either real API.
 - Some source/OCR text may contain encoding artifacts.
 - Deterministic extraction is regex/heuristic-based.
 - Gemini second pass requires API access, quota, and network availability.
-- Provider memory uses local JSON plus an optional FAISS/LlamaIndex index. Its deterministic Torch feature-hash embedding requires no model repository or model download. Torch uses CUDA automatically when available; FAISS remains the CPU package.
+- Provider memory uses transactional local SQLite plus an optional FAISS/LlamaIndex index. Its deterministic Torch feature-hash embedding requires no model repository or model download. It defaults to CPU for consistent local/AWS behavior; set `TORCH_EMBEDDING_DEVICE=cuda` only on a compatible CUDA build.
 - Fresh clones do not contain invoice data; local invoice import or pipeline commands create the ignored `data/` tree.
 - Old timestamped Gemini artifacts may exist from earlier development runs.
 
@@ -434,7 +436,7 @@ Missing or uncertain values are `null` by default.
 
 Provider memory is stored in:
 ```text
-runtime/knowledge_base.json
+runtime/knowledge_base.sqlite3
 ```
 
 The generated vector index is stored in `runtime/vector_store/` for direct local runs and `/app/runtime/vector_store/` in the container. Build or refresh it with:
@@ -457,4 +459,4 @@ To retrieve context manually run (with example):
 uv run python rag\adaptive_rag.py retrieve --text-file data\data_txt\telecom_05.txt --provider vodafone --invoice-type telecom
 ```
 
-Provider retrieval prefers matching FAISS results and falls back to provider-scoped JSON when an index is absent. The embedding is computed locally with Torch and never applies one supplier's feedback to another supplier.
+Provider retrieval prefers matching FAISS results and falls back to provider-scoped SQLite memory when an index is absent. The database separates unreviewed observations from explicitly source-verified invoices. The embedding is computed locally with Torch and never applies one supplier's feedback to another supplier.

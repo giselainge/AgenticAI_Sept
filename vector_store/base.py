@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import logging
 import os
 import re
@@ -62,14 +61,14 @@ def _embedding_class(base_embedding: Any, torch_module: Any) -> type:
 
     class LocalHashEmbedding(base_embedding):
         dimension: int = EMBEDDING_DIMENSION
-        device: str = "cuda" if torch_module.cuda.is_available() else "cpu"
+        device: str = "cpu"
 
         @classmethod
         def class_name(cls) -> str:
             return "local_hash_embedding"
 
-        def _embed(self, text: str) -> list[float]:
-            vector = torch_module.zeros(self.dimension, dtype=torch_module.float32, device=self.device)
+        def _embed_on(self, text: str, device: str) -> list[float]:
+            vector = torch_module.zeros(self.dimension, dtype=torch_module.float32, device=device)
             tokens = re.findall(r"[\w]+", (text or "").casefold(), flags=re.UNICODE)
             for token in tokens:
                 digest = hashlib.blake2b(token.encode("utf-8"), digest_size=16).digest()
@@ -80,6 +79,16 @@ def _embedding_class(base_embedding: Any, torch_module: Any) -> type:
             if norm.item() > 0:
                 vector = vector / norm
             return vector.detach().cpu().tolist()
+
+        def _embed(self, text: str) -> list[float]:
+            try:
+                return self._embed_on(text, self.device)
+            except RuntimeError:
+                if self.device == "cpu":
+                    raise
+                logger.warning("Torch CUDA embedding failed; retrying this index on CPU.")
+                object.__setattr__(self, "device", "cpu")
+                return self._embed_on(text, "cpu")
 
         def _get_query_embedding(self, query: str) -> list[float]:
             return self._embed(query)
@@ -94,10 +103,22 @@ def _embedding_class(base_embedding: Any, torch_module: Any) -> type:
 
 
 def _load_kb(kb_path: str | Path) -> dict[str, Any]:
-    path = Path(kb_path)
-    if not path.exists():
-        return {"version": 1, "providers": {}}
-    return json.loads(path.read_text(encoding="utf-8"))
+    from rag.adaptive_rag import load_kb
+
+    return load_kb(kb_path)
+
+
+def _embedding_device(torch_module: Any) -> str:
+    requested = os.getenv("TORCH_EMBEDDING_DEVICE", "cpu").strip().casefold()
+    if requested == "auto":
+        return "cuda" if torch_module.cuda.is_available() else "cpu"
+    if requested == "cuda" and torch_module.cuda.is_available():
+        return "cuda"
+    if requested not in {"", "cpu", "cuda"}:
+        logger.warning("Unknown TORCH_EMBEDDING_DEVICE=%s; using CPU.", requested)
+    elif requested == "cuda":
+        logger.warning("CUDA embeddings requested but CUDA is unavailable; using CPU.")
+    return "cpu"
 
 
 def _index_exists(index_path: Path) -> bool:
@@ -120,7 +141,10 @@ def build_index(
 
     deps = _load_vector_dependencies()
     embedding_type = _embedding_class(deps["BaseEmbedding"], deps["torch"])
-    embed_model = embedding_type(dimension=EMBEDDING_DIMENSION)
+    embed_model = embedding_type(
+        dimension=EMBEDDING_DIMENSION,
+        device=_embedding_device(deps["torch"]),
+    )
     index_settings = {
         "embed_model": embed_model,
         "transformations": [
@@ -186,7 +210,7 @@ def retrieve_provider_memory_docs(
     provider_id = canonical_provider(provider_hint, query_text)
     if provider_id == "unknown":
         return []
-    # Retrieval is read-only; an absent index falls back to JSON memory.
+    # Retrieval is read-only; an absent index falls back to provider memory.
     if not _index_exists(Path(index_path)) and not (
         _INDEX_CACHE is not None and _INDEX_CACHE_PATH == Path(index_path)
     ):

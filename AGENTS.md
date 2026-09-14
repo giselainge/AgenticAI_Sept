@@ -68,7 +68,7 @@ Do not introduce a `src/` layout unless the user explicitly requests it.
 - `uv.lock`: reproducible resolution for local and Docker environments.
 - `tests/`: pytest tests and smoke tests.
 - `docs/`: project notes and supporting documentation that are not runtime entry points.
-- `runtime/knowledge_base.json`: generated/local persisted provider memory when provider memory exists.
+- `runtime/knowledge_base.sqlite3`: generated/local persisted provider memory when provider memory exists.
 - `rag/last_retrieval_context.json`: generated/local exported retrieval context sample when retrieval is exported.
 - `data/data_raw/`: original uploaded/source invoice files. Treat as immutable and never commit them.
 - `data/data_pdf/`: canonical/searchable PDFs generated or copied by OCR processing.
@@ -180,7 +180,7 @@ uv run pytest
 - Keep `.env.example` as placeholders only.
 - Keep `.gitignore` active for local caches, logs, environments, secrets, and runtime RAG memory.
 - Keep the ignored `data/` tree local. Do not commit raw invoices, OCR outputs, generated reports, structured rows, or Gemini artifacts.
-- Keep `runtime/knowledge_base.json` and `rag/last_retrieval_context.json` ignored because they can contain local reviewer feedback and retrieval traces.
+- Keep `runtime/knowledge_base.sqlite3` and `rag/last_retrieval_context.json` ignored because they can contain local reviewer feedback and retrieval traces.
 - Legacy `env.example` and `gitignore` files may exist from earlier setup; `.env.example` and `.gitignore` are the active convention.
 - Dashboard API key fields are request-only; do not persist or log them.
 - Validate user-supplied file paths and uploaded filenames.
@@ -291,7 +291,7 @@ Rules:
 
 ## RAG And Provider Memory
 
-Provider memory lives in `runtime/knowledge_base.json` and is managed by `rag/adaptive_rag.py`. Retrieval is deterministic, local, and scoped to the identified provider.
+Provider memory lives in `runtime/knowledge_base.sqlite3` and is managed by `rag/adaptive_rag.py`. Retrieval is deterministic, local, and scoped to the identified provider.
 
 The knowledge base stores:
 

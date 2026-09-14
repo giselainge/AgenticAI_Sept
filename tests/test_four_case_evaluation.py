@@ -37,12 +37,9 @@ def test_four_case_run_marks_model_cases_unavailable_without_calling_a_model(tmp
         output_dir=tmp_path / "four",
     )
 
-    assert list(result.cases) == ["ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic"]
-    assert result.cases["ocr_rules"].status == "measured"
-    assert result.cases["ocr_agentic"].status == "measured"
+    assert list(result.cases) == ["ocr_llm", "ocr_llm_agentic"]
     assert result.cases["ocr_llm"].status == "unavailable"
     assert result.cases["ocr_llm_agentic"].status == "unavailable"
-    assert result.cases["ocr_rules"].fields_retrieved_percent == result.cases["ocr_agentic"].fields_retrieved_percent
     assert Path(result.artifact_path or "").exists()
 
 
@@ -59,19 +56,17 @@ def test_four_case_judge_and_human_verdict_remain_separate(tmp_path: Path) -> No
         assert "OCR_EVIDENCE_BEGIN" in kwargs["prompt"]
         return json.dumps(
             {
-                "best_case": "ocr_rules",
+                "best_case": "ocr_llm",
                 "scores": {
-                    "ocr_rules": 7.0,
-                    "ocr_llm": 0.0,
-                    "ocr_agentic": 7.0,
-                    "ocr_llm_agentic": 0.0,
+                    "ocr_llm": 7.0,
+                    "ocr_llm_agentic": 8.0,
                 },
                 "confidence": 0.8,
                 "summary": "Only the non-model cases were measured.",
                 "human_verdict_required": False,
                 "field_decisions": [
                     {"field": "total_value", "winner": "tie", "reason": "The measured cases agree."},
-                    {"field": "invented", "winner": "ocr_rules", "reason": "Filtered."},
+                    {"field": "invented", "winner": "ocr_llm", "reason": "Filtered."},
                 ],
             }
         )
@@ -87,7 +82,7 @@ def test_four_case_judge_and_human_verdict_remain_separate(tmp_path: Path) -> No
     artifact_text = Path(reviewed.artifact_path or "").read_text(encoding="utf-8")
 
     assert judged.judge is not None
-    assert judged.judge.best_case == "ocr_rules"
+    assert judged.judge.best_case == "ocr_llm"
     assert judged.judge.human_verdict_required is True
     assert [item.field for item in judged.judge.field_decisions] == ["total_value"]
     assert reviewed.human_evaluation and reviewed.human_evaluation["best_case"] == "tie"
@@ -102,6 +97,19 @@ def test_four_case_fields_are_scored_against_human_source_values(tmp_path: Path)
         kb_path=tmp_path / "kb.json",
         output_dir=tmp_path / "four",
     )
+    expected = {
+        "invoice_type": "water",
+        "invoice_number": "FT 2026/123",
+        "total_value": "12.30",
+        "buyer_vat_number": "null",
+    }
+    for candidate in result.cases.values():
+        candidate.status = "measured"
+        candidate.row.update(expected)
+    Path(result.artifact_path or "").write_text(
+        json.dumps(result.model_dump(), ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     scored = record_four_case_field_verdicts(
         result.artifact_path or "",
@@ -115,5 +123,5 @@ def test_four_case_fields_are_scored_against_human_source_values(tmp_path: Path)
 
     evaluation = scored.human_field_evaluation or {}
     assert evaluation["verified_field_count"] == 4
-    assert evaluation["case_scores"]["ocr_rules"]["accuracy_percent"] == 100.0
-    assert evaluation["case_scores"]["ocr_llm"]["accuracy_percent"] is None
+    assert evaluation["case_scores"]["ocr_llm"]["accuracy_percent"] == 100.0
+    assert evaluation["case_scores"]["ocr_llm_agentic"]["accuracy_percent"] == 100.0

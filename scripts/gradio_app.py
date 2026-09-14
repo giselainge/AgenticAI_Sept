@@ -40,7 +40,8 @@ from llm.agent.workflow import (
     record_ab_verdict,
     run_agentic_ab_test,
 )
-from rag.adaptive_rag import DEFAULT_KB, load_kb, record_validated_invoice
+from rag.adaptive_rag import DEFAULT_KB, ensure_seeded_kb, load_kb, record_validated_invoice
+from rag.sqlite_store import database_counts, is_sqlite_path
 from scripts.extract_invoice_fields import read_ocr_body
 from scripts.july_extract_invoice_fields import extract_row as extract_july_row
 from scripts.ocr_text_extraction import SUPPORTED_EXTENSIONS, process_file
@@ -666,7 +667,7 @@ def _four_case_field_rows(
     for group, fields in FIELD_GROUPS.items():
         for field_name in fields:
             values = []
-            for case_id in ("ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic"):
+            for case_id in ("ocr_llm", "ocr_llm_agentic"):
                 case = result.cases[case_id]
                 values.append(case.row.get(field_name, "null") if case.row else f"({case.status})")
             winner, reason = judge_items.get(field_name, ("not judged", ""))
@@ -680,23 +681,23 @@ def run_four_cases(
     api_key: str,
     llm_provider: str = "gemini",
 ) -> tuple[Any, ...]:
-    """Run all available cases; missing model configuration remains explicit."""
+    """Run both A/B plans; missing model configuration remains explicit."""
     try:
         text_path, pdf_path, source_label, _ = _prepare_inputs(uploaded_file)
         result = run_four_case_evaluation(
             text_path,
             pdf_file=pdf_path,
             kb_path=DEFAULT_KB,
-            output_dir=DEFAULT_AGENTIC_AB_DIR / "four_case",
+            output_dir=DEFAULT_AGENTIC_AB_DIR / "source_verified_ab",
             llm_provider=llm_provider,
             llm_api_key=api_key,
             llm_model=model,
         )
     except Exception as exc:
-        return f"Four-case assessment failed: {exc}", [], [], [], {}, "", ""
+        return f"Source-verified A/B assessment failed: {exc}", [], [], [], {}, "", ""
     measured = sum(case.status == "measured" for case in result.cases.values())
     status = (
-        f"Four-case artifact created locally for {source_label}. Measured cases: {measured}/4. "
+        f"A/B artifact created locally for {source_label}. Measured plans: {measured}/2. "
         "Accuracy still requires the judge plus a human verdict."
     )
     return (
@@ -721,7 +722,7 @@ def run_four_case_judge_ui(
     field_rows: Any = None,
 ) -> tuple[str, dict[str, Any], list[list[Any]]]:
     if not artifact_path:
-        return "Run the four cases before invoking the judge.", {}, []
+        return "Run Plan A and Plan B before invoking the judge.", {}, []
     try:
         selected_provider = provider if provider in {"gemini", "openai"} else "openai_compatible"
         selected_model = (
@@ -744,10 +745,10 @@ def run_four_case_judge_ui(
             provider=selected_provider,
         )
     except Exception as exc:
-        return f"Four-case judge could not run: {exc}", {}, []
+        return f"A/B judge could not run: {exc}", {}, []
     judge = result.judge
     if judge is None:
-        return "Four-case judge produced no result.", {}, []
+        return "A/B judge produced no result.", {}, []
     verified = _verified_values_from_table(field_rows)
     return (
         f"Judge status: {judge.status}; best case: {judge.best_case}; confidence: {judge.confidence}. "
@@ -759,7 +760,7 @@ def run_four_case_judge_ui(
 
 def score_four_case_fields_ui(artifact_path: str, field_rows: Any) -> tuple[str, dict[str, Any], list[list[Any]]]:
     if not artifact_path:
-        return "Run the four cases before scoring fields.", {}, []
+        return "Run Plan A and Plan B before scoring fields.", {}, []
     verified = _verified_values_from_table(field_rows)
     try:
         result = record_four_case_field_verdicts(artifact_path, verified)
@@ -767,7 +768,7 @@ def score_four_case_fields_ui(artifact_path: str, field_rows: Any) -> tuple[str,
         return f"Source verification could not be saved: {exc}", {}, []
     evaluation = result.human_field_evaluation or {}
     return (
-        f"Scored {evaluation.get('verified_field_count', 0)} source-verified fields across all available cases.",
+        f"Scored {evaluation.get('verified_field_count', 0)} source-verified fields across both plans.",
         evaluation,
         _four_case_field_rows(result, verified),
     )
@@ -780,7 +781,7 @@ def save_verified_to_kb_ui(
     note: str,
 ) -> tuple[str, dict[str, Any]]:
     if not artifact_path:
-        return "Run the four cases before saving provider memory.", {}
+        return "Run Plan A and Plan B before saving provider memory.", {}
     verified = _verified_values_from_table(field_rows)
     if not verified:
         return "Enter at least one source-verified value before saving provider memory.", {}
@@ -800,7 +801,8 @@ def save_verified_to_kb_ui(
         from vector_store.base import build_index, retrieve_provider_memory_docs
 
         build_index(kb_path=DEFAULT_KB, index_path=DEFAULT_VECTOR_STORE_DIR, force_rebuild=True)
-        text_path = Path(str(result.cases["ocr_rules"].row.get("ocr_text_file") or ""))
+        evidence_case = result.cases.get("ocr_llm") or result.cases["ocr_llm_agentic"]
+        text_path = Path(str(evidence_case.row.get("ocr_text_file") or ""))
         _, query_text = read_ocr_body(text_path) if text_path.exists() else ("", "")
         hits = retrieve_provider_memory_docs(
             query_text=query_text,
@@ -833,17 +835,17 @@ def save_verified_to_kb_ui(
 
 def save_four_case_verdict(artifact_path: str, best_case: str, note: str) -> str:
     if not artifact_path:
-        return "Run the four cases before saving a human verdict."
+        return "Run Plan A and Plan B before saving a human verdict."
     try:
         result = record_four_case_verdict(artifact_path, best_case, note)
     except Exception as exc:
-        return f"Could not save the four-case verdict: {exc}"
+        return f"Could not save the A/B verdict: {exc}"
     assert result.human_evaluation is not None
-    return f"Saved human four-case verdict '{result.human_evaluation['best_case']}' locally."
+    return f"Saved human A/B verdict '{result.human_evaluation['best_case']}' locally."
 
 
 def knowledge_base_view() -> tuple[list[list[Any]], dict[str, Any]]:
-    kb = load_kb(DEFAULT_KB)
+    kb = ensure_seeded_kb(kb_path=DEFAULT_KB)
     rows: list[list[Any]] = []
     for provider_id, provider in sorted(kb.get("providers", {}).items()):
         rows.append(
@@ -851,21 +853,26 @@ def knowledge_base_view() -> tuple[list[list[Any]], dict[str, Any]]:
                 provider_id,
                 provider.get("provider_name", provider_id),
                 len(provider.get("provider_specific_extraction_tips", [])),
+                len(provider.get("observed_invoices", [])),
                 len(provider.get("human_reviewer_feedback", [])),
                 len(provider.get("previously_validated_invoices", [])),
             ]
         )
-    return rows, kb
+    details: dict[str, Any] = {"storage": {"path": str(DEFAULT_KB), "type": "sqlite"}, **kb}
+    if is_sqlite_path(DEFAULT_KB):
+        details["storage"]["rows"] = database_counts(DEFAULT_KB)
+    return rows, details
 
 
 def rebuild_vector_index() -> str:
     try:
         from vector_store.base import build_index
 
+        ensure_seeded_kb(kb_path=DEFAULT_KB)
         build_index(kb_path=DEFAULT_KB, index_path=DEFAULT_VECTOR_STORE_DIR, force_rebuild=True)
     except Exception as exc:
         return f"Vector index was not built: {exc}"
-    return f"FAISS/LlamaIndex provider index rebuilt locally at {DEFAULT_VECTOR_STORE_DIR}."
+    return f"SQLite-backed FAISS/LlamaIndex provider index rebuilt locally at {DEFAULT_VECTOR_STORE_DIR}."
 
 
 def build_demo() -> Any:
@@ -916,8 +923,6 @@ def build_demo() -> Any:
                     "Retrieve fields with GPT / Gemini and compare Plan A vs Plan B",
                     variant="primary",
                 )
-            enable_plan_b_llm = gr.State(False)
-            run_button = gr.Button("Run no-LLM rule ablations (diagnostic only)")
             status = gr.Markdown()
             run_summary = gr.JSON(label="Field retrieval and routing summary")
             field_table = gr.Dataframe(
@@ -952,23 +957,6 @@ def build_demo() -> Any:
             artifact = gr.Textbox(label="Local result artifact", interactive=False)
             artifact_state = gr.State("")
 
-            run_button.click(
-                run_local_inspection,
-                inputs=[invoice, enable_plan_b_llm, plan_b_model, plan_b_api_key, plan_b_provider],
-                outputs=[
-                    status,
-                    run_summary,
-                    field_table,
-                    plan_a,
-                    plan_b,
-                    comparison,
-                    trace,
-                    processing_details,
-                    audit_log,
-                    artifact,
-                    artifact_state,
-                ],
-            )
             retrieve_fields_button.click(
                 retrieve_fields_with_llm,
                 inputs=[invoice, plan_b_model, plan_b_api_key, plan_b_provider],
@@ -1049,12 +1037,11 @@ def build_demo() -> Any:
                     outputs=[judge_status, judge_result, field_table],
                 )
 
-        with gr.Tab("Four-case assessment"):
+        with gr.Tab("Source-verified A/B assessment"):
             gr.Markdown(
-                "Compare the four requested configurations on one invoice. With the provider key blank, "
-                "the two local cases run and the two LLM cases are marked unavailable. Pasting a key and "
-                "clicking **Run four cases** makes two extraction calls: one without provider RAG "
-                "and one inside the agentic workflow. The password field is request-only and is not saved."
+                "Compare Plan A (the July OCR + direct LLM pipeline) with Plan B (the same OCR and LLM "
+                "inside the agent workflow). Clicking **Run A/B assessment** makes one extraction call for "
+                "each plan. The password field is request-only and is not saved."
             )
             four_case_invoice = gr.UploadButton(
                 "Upload invoice PDF or image",
@@ -1073,7 +1060,7 @@ def build_demo() -> Any:
                 placeholder="OpenAI: gpt-5.6-terra; Gemini: gemini-3.5-flash",
             )
             four_case_key = gr.Textbox(label="Provider API key", type="password")
-            four_case_button = gr.Button("Run four cases", variant="primary")
+            four_case_button = gr.Button("Run A/B assessment", variant="primary")
             four_case_status = gr.Markdown()
             four_case_table = gr.Dataframe(
                 headers=[
@@ -1087,11 +1074,11 @@ def build_demo() -> Any:
                 ],
                 datatype=["str", "str", "str", "number", "number", "str", "str"],
                 interactive=False,
-                label="Four-case comparison",
+                label="Plan A / Plan B comparison",
             )
             gr.Markdown(
                 "### Field-by-field source check\n"
-                "Inspect the original page and compare each of the 19 fields across all four scenarios. "
+                "Inspect the original page and compare each of the 19 fields across both plans. "
                 "Enter the exact source value in **Source-verified value**; enter `<absent>` when the source "
                 "does not contain that field."
             )
@@ -1107,20 +1094,18 @@ def build_demo() -> Any:
                         "Group",
                         "Field",
                         "Source-verified value",
-                        "Ablation: July OCR + rules",
                         "Plan A: July OCR + LLM",
-                        "Ablation: July OCR + agentic rules",
                         "Plan B: July OCR + LLM + agents",
                         "Judge winner",
                         "Judge reason",
                     ],
-                    datatype=["str"] * 9,
+                    datatype=["str"] * 7,
                     interactive=True,
                     type="array",
                     label="Extracted fields compared with the source",
                 )
             with gr.Accordion("Candidate outputs", open=False):
-                four_case_result = gr.JSON(label="Four-case artifact contents")
+                four_case_result = gr.JSON(label="A/B artifact contents")
                 four_case_artifact = gr.Textbox(label="Local result artifact", interactive=False)
             four_case_artifact_state = gr.State("")
             four_case_button.click(
@@ -1137,7 +1122,7 @@ def build_demo() -> Any:
                 ],
             )
 
-            with gr.Accordion("Optional independent four-case judge", open=False):
+            with gr.Accordion("Optional independent A/B judge", open=False):
                 gr.Markdown(
                     "The judge uses the OCR evidence to rank only the available candidates. It is advisory; "
                     "save a separate human verdict after checking the source invoice. Select the same official "
@@ -1166,7 +1151,7 @@ def build_demo() -> Any:
                     label="Judge API key (blank reuses a matching extraction key)",
                     type="password",
                 )
-                four_judge_button = gr.Button("Run four-case LLM judge")
+                four_judge_button = gr.Button("Run A/B LLM judge")
                 four_judge_status = gr.Markdown()
                 four_judge_result = gr.JSON(label="Advisory judge result")
                 four_judge_button.click(
@@ -1185,7 +1170,7 @@ def build_demo() -> Any:
                 )
 
             gr.Markdown("### Human source verification")
-            four_score_button = gr.Button("Score all four cases against source-verified fields")
+            four_score_button = gr.Button("Score both plans against source-verified fields")
             four_score_status = gr.Markdown()
             four_score_result = gr.JSON(label="Measured field accuracy from human ground truth")
             four_score_button.click(
@@ -1194,12 +1179,10 @@ def build_demo() -> Any:
                 outputs=[four_score_status, four_score_result, four_field_table],
             )
 
-            gr.Markdown("### Human four-case verdict")
+            gr.Markdown("### Human A/B verdict")
             four_verdict = gr.Dropdown(
                 choices=[
-                    "ocr_rules",
                     "ocr_llm",
-                    "ocr_agentic",
                     "ocr_llm_agentic",
                     "tie",
                     "inconclusive",
@@ -1208,7 +1191,7 @@ def build_demo() -> Any:
                 label="Best verified configuration",
             )
             four_verdict_note = gr.Textbox(label="Reviewer note")
-            four_verdict_button = gr.Button("Save four-case verdict locally")
+            four_verdict_button = gr.Button("Save A/B verdict locally")
             four_verdict_status = gr.Markdown()
             four_verdict_button.click(
                 save_four_case_verdict,
@@ -1223,7 +1206,7 @@ def build_demo() -> Any:
                 "the index to prove the new provider example is searchable."
             )
             four_kb_case = gr.Dropdown(
-                choices=list(("ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic")),
+                choices=list(("ocr_llm", "ocr_llm_agentic")),
                 value="ocr_llm_agentic",
                 label="Reviewed candidate",
             )
@@ -1243,8 +1226,8 @@ def build_demo() -> Any:
             )
             refresh_button = gr.Button("Refresh knowledge base")
             provider_table = gr.Dataframe(
-                headers=["Provider ID", "Provider", "Tips", "Feedback", "Validated invoices"],
-                datatype=["str", "str", "number", "number", "number"],
+                headers=["Provider ID", "Provider", "Tips", "Observed invoices", "Feedback", "Validated invoices"],
+                datatype=["str", "str", "number", "number", "number", "number"],
                 interactive=False,
             )
             kb_json = gr.JSON(label="Local provider memory")

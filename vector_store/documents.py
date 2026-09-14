@@ -26,7 +26,7 @@ def make_document(text: str, metadata: dict[str, Any]) -> Any:
 
 def _provider_metadata(provider_id: str, provider: dict[str, Any], section: str) -> dict[str, Any]:
     return {
-        "source": "runtime/knowledge_base.json",
+        "source": "provider_memory_sql",
         "provider_id": provider_id,
         "provider_name": provider.get("provider_name") or provider_id.replace("_", " ").title(),
         "department": "Invoice Processing",
@@ -74,7 +74,7 @@ The CSV field order is defined by invoice_parser.schema.FIELDNAMES.
             text="""
 Adaptive RAG Provider Memory
 
-rag/adaptive_rag.py maintains local provider memory in runtime/knowledge_base.json.
+rag/adaptive_rag.py maintains local provider memory in runtime/knowledge_base.sqlite3.
 The vector store is generated from that memory and retrieves provider-specific
 tips, OCR corrections, layouts, reviewer feedback, and field correction patterns.
 """,
