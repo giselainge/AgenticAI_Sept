@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -52,6 +53,26 @@ def test_local_gradio_callback_runs_both_plans_without_llm(tmp_path: Path, monke
     assert artifact == state
 
 
+def test_local_inspection_exposes_fields_postprocess_and_safe_audit_log(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(gradio_app, "DEFAULT_AGENTIC_AB_DIR", tmp_path / "ab")
+    monkeypatch.setattr(gradio_app, "DEFAULT_KB", tmp_path / "knowledge_base.json")
+    source = configure_local_invoice(monkeypatch, tmp_path)
+
+    outputs = gradio_app.run_local_inspection(source)
+    status, summary, fields, _, _, _, trace, processing, audit, artifact, state = outputs
+    saved = json.loads(Path(artifact).read_text(encoding="utf-8"))
+
+    assert "Completed locally" in status
+    assert summary["required_fields"] == 19
+    assert len(fields) == 19
+    assert len(trace) == 5
+    assert "ocr" in processing and "post_processing" in processing
+    assert any(row[0] == "provider_memory_agent" for row in audit)
+    assert saved["preprocessing"] is not None
+    assert len(saved["audit_log"]) >= 8
+    assert artifact == state
+
+
 def test_local_gradio_verdict_is_saved(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(gradio_app, "DEFAULT_AGENTIC_AB_DIR", tmp_path / "ab")
     monkeypatch.setattr(gradio_app, "DEFAULT_KB", tmp_path / "knowledge_base.json")
@@ -97,6 +118,37 @@ def test_gradio_judge_callback_keeps_human_verdict_required(tmp_path: Path, monk
     assert "human verdict is still required" in status
     assert judge["human_verdict_required"] is True
     assert seen["api_key"] == "request-only-secret"
+
+
+def test_gradio_gemini_judge_can_reuse_extraction_key(tmp_path: Path, monkeypatch) -> None:
+    artifact = tmp_path / "comparison.json"
+    artifact.write_text("{}", encoding="utf-8")
+    seen = {}
+
+    def fake_judge(path, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(
+            llm_judge=SimpleNamespace(
+                status="unavailable",
+                summary="mocked",
+                model_dump=lambda: {"status": "unavailable"},
+            )
+        )
+
+    monkeypatch.setattr(gradio_app, "judge_ab_artifact", fake_judge)
+    gradio_app.run_judge(
+        str(artifact),
+        "",
+        "gemini-judge-model",
+        "",
+        "gemini",
+        "shared-request-only-key",
+    )
+
+    assert seen["provider"] == "gemini"
+    assert seen["base_url"] == ""
+    assert seen["api_key"] == "shared-request-only-key"
+    assert seen["model"] == "gemini-judge-model"
 
 
 def test_gradio_host_allowlist_is_loopback_only() -> None:

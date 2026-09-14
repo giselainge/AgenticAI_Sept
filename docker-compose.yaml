@@ -1,26 +1,33 @@
 name: agentic-invoice-parser
 
 x-billing-service: &billing-service
+  platform: linux/amd64
   build:
     context: .
     dockerfile: Dockerfile
-  image: agentic-ai-billing-agent:local
+  image: ${APP_IMAGE_TAG:-agentic-ai-billing-agent:local}
   restart: unless-stopped
   environment: &billing-service-environment
     GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
     JUDGE_BASE_URL: ${JUDGE_BASE_URL:-}
     JUDGE_MODEL: ${JUDGE_MODEL:-}
-    JUDGE_API_KEY: ${JUDGE_API_KEY:-}
     INVOICE_DATA_ROOT: /app/data
     RAG_KB_PATH: /app/runtime/knowledge_base.json
     VECTOR_STORE_DIR: /app/runtime/vector_store
+    OCR_LANGUAGES: ${OCR_LANGUAGES:-por+eng}
+    OCR_DPI: ${OCR_DPI:-300}
+    OCR_TIMEOUT_SECONDS: ${OCR_TIMEOUT_SECONDS:-900}
+    OCR_IMAGE_MIN_DIMENSION: ${OCR_IMAGE_MIN_DIMENSION:-1800}
+    OCR_IMAGE_MAX_PIXELS: ${OCR_IMAGE_MAX_PIXELS:-24000000}
+    OCR_IMAGE_MAX_SCALE: ${OCR_IMAGE_MAX_SCALE:-3.0}
+    OMP_THREAD_LIMIT: ${OMP_THREAD_LIMIT:-2}
     HEALTHCHECK_PORT: "8000"
   volumes:
-    - ./data:/app/data
+    - ./data/data:/app/data
     - ./runtime:/app/runtime
   read_only: true
   tmpfs:
-    - /tmp:rw,nosuid,nodev,size=512m
+    - /tmp:rw,nosuid,nodev,size=1g
   security_opt:
     - no-new-privileges:true
   cap_drop:
@@ -33,7 +40,7 @@ services:
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"]
       interval: 30s
       timeout: 5s
       start_period: 20s

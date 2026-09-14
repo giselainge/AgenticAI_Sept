@@ -216,6 +216,30 @@ def test_llm_judge_fails_closed_on_malformed_output(tmp_path: Path) -> None:
     assert judged.llm_judge.human_verdict_required is True
 
 
+def test_gemini_judge_provider_does_not_require_a_base_url(tmp_path: Path) -> None:
+    text_path = synthetic_text(tmp_path / "water_bill.txt")
+    result = run_agentic_ab_test(text_path, kb_path=tmp_path / "kb.json", output_dir=tmp_path / "ab")
+
+    judged = judge_ab_artifact(
+        result.artifact_path,
+        api_key="request-only-gemini-key",
+        model="gemini-judge-model",
+        provider="gemini",
+        judge_runner=lambda **_: {
+            "preferred_plan": "tie",
+            "plan_a_score": 7,
+            "plan_b_score": 7,
+            "confidence": 0.6,
+            "summary": "Candidates agree.",
+            "field_decisions": [],
+        },
+    )
+
+    assert judged.llm_judge is not None
+    assert judged.llm_judge.status == "completed"
+    assert judged.llm_judge.provider == "gemini"
+
+
 def test_dashboard_renders_and_runs_isolated_ab_experiment(tmp_path: Path, monkeypatch) -> None:
     import scripts.dashboard as dashboard
 

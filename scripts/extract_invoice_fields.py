@@ -26,6 +26,53 @@ DATE_PATTERNS = [
     re.compile(r"\b(\d{4})[./-](\d{1,2})[./-](\d{1,2})\b"),
     re.compile(r"\b(\d{4})(\d{2})(\d{2})\b"),
 ]
+MONTH_NUMBERS = {
+    "jan": 1,
+    "janeiro": 1,
+    "fev": 2,
+    "fevereiro": 2,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "marco": 3,
+    "march": 3,
+    "abr": 4,
+    "abril": 4,
+    "apr": 4,
+    "april": 4,
+    "mai": 5,
+    "maio": 5,
+    "may": 5,
+    "jun": 6,
+    "junho": 6,
+    "june": 6,
+    "jul": 7,
+    "julho": 7,
+    "july": 7,
+    "ago": 8,
+    "agosto": 8,
+    "aug": 8,
+    "august": 8,
+    "set": 9,
+    "setembro": 9,
+    "sep": 9,
+    "september": 9,
+    "out": 10,
+    "outubro": 10,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "novembro": 11,
+    "november": 11,
+    "dez": 12,
+    "dezembro": 12,
+    "dec": 12,
+    "december": 12,
+}
+NAMED_DATE_RE = re.compile(
+    r"\b(\d{1,2})\s+(?:de\s+)?([A-Za-zÀ-ÿ]{3,12})\s+(?:de\s+)?(\d{4})\b",
+    re.I,
+)
 
 MONEY_RE = re.compile(
     r"(?P<prefix>EUR|TL|€)?\s*"
@@ -67,6 +114,19 @@ def all_dates(text: str) -> list[tuple[str, int]]:
             if parsed and parsed not in seen:
                 dates.append((parsed, match.start()))
                 seen.add(parsed)
+    for match in NAMED_DATE_RE.finditer(text):
+        day = int(match.group(1))
+        month = MONTH_NUMBERS.get(fold_text(match.group(2)).rstrip("."))
+        year = int(match.group(3))
+        if month is None:
+            continue
+        try:
+            parsed = datetime(year, month, day).date().isoformat()
+        except ValueError:
+            continue
+        if parsed not in seen:
+            dates.append((parsed, match.start()))
+            seen.add(parsed)
     return sorted(dates, key=lambda item: item[1])
 
 
@@ -75,7 +135,8 @@ def nearest_date(text: str, labels: list[str]) -> str | None:
     dates = all_dates(text)
     best: tuple[int, str] | None = None
     for label in labels:
-        for label_match in re.finditer(re.escape(fold_text(label)), folded):
+        flexible_label = re.escape(fold_text(label)).replace(r"\ ", r"\s+")
+        for label_match in re.finditer(flexible_label, folded):
             for date, pos in dates:
                 distance = abs(pos - label_match.start())
                 if distance < 250 and (best is None or distance < best[0]):
@@ -181,8 +242,10 @@ def extract_provider_address(text: str) -> str | None:
 def extract_invoice_number(text: str) -> str | None:
     patterns = [
         r"Fatura ID:\s*([A-Z0-9][A-Z0-9./-]+)",
-        r"Fatura:\s*([A-Z0-9][A-Z0-9./ -]+)",
+        r"Fatura\s+n[.º°ot]*\s*:?[ \t]*([A-Z]{1,4}\s*[A-Z0-9./-]+(?:\s+[A-Z0-9./-]+)?)",
         r"FATURA\s*n[oº]?\s*([A-Z0-9./-]+)",
+        r"Nota\s+de\s+(?:d[eé]bito|cr[eé]dito)\s+n[.º°o?¢®]*\s*([A-Z]{1,4}\s*[A-Z0-9./-]+(?:\s+[A-Z0-9./-]+)?)",
+        r"(?:^|\n)\s*Fatura:\s*([A-Z0-9][A-Z0-9./ -]+)",
         r"No Documento\s+NoContribuinte\s+N[°o]\s*deConta\s+([A-Z]{1,4}\s*[0-9./-]+)",
         r"\b(FT\s*[A-Z0-9./-]+)",
     ]
@@ -257,6 +320,8 @@ def extract_service_plan(text: str) -> str | None:
         r"Tarifa Contratada [^:\n]+:\s*([^\n]+)",
         r"Tipo de utilizador\s+([^\n]+)",
         r"Classe/Tipo Factura[^\n]+-\s*([^\n]+)",
+        r"Servi[cç]os?\s*-\s*([^\n]{3,80})",
+        r"Pot[eê]ncia\s+contratada\s*:?[ \t]*([^\n]{3,80})",
     ]
     for pattern in candidates:
         match = re.search(pattern, text, re.I)
@@ -269,34 +334,31 @@ def extract_service_plan(text: str) -> str | None:
 
 
 def extract_period(text: str) -> tuple[str | None, str | None]:
+    named_range = re.search(
+        r"(\d{1,2})\s+(?:de\s+)?([A-Za-zÀ-ÿ]{3,12})\s+a\s+"
+        r"(\d{1,2})\s+(?:de\s+)?([A-Za-zÀ-ÿ]{3,12})\s+(?:de\s+)?(\d{4})",
+        text,
+        re.I,
+    )
+    if named_range:
+        start_month = MONTH_NUMBERS.get(fold_text(named_range.group(2)).rstrip("."))
+        end_month = MONTH_NUMBERS.get(fold_text(named_range.group(4)).rstrip("."))
+        end_year = int(named_range.group(5))
+        if start_month and end_month:
+            start_year = end_year - 1 if start_month > end_month else end_year
+            try:
+                start = datetime(start_year, start_month, int(named_range.group(1))).date().isoformat()
+                end = datetime(end_year, end_month, int(named_range.group(3))).date().isoformat()
+                return start, end
+            except ValueError:
+                pass
+
     patterns = [
         r"(\d{4}[./-]\d{2}[./-]\d{2})\s*a\s*(\d{4}[./-]\d{2}[./-]\d{2})",
         r"(\d{1,2}\s+[A-Za-zÃÁÂÀÇÉÊÍÓÔÕÚÜçéêãõ]{3,}\.?)\s*a\s*(\d{1,2}\s+[A-Za-zÃÁÂÀÇÉÊÍÓÔÕÚÜçéêãõ]{3,}\.?)",
         r"\(\s*(\d{1,2}\s+[A-Za-z]{3})\s*-\s*(\d{1,2}\s+[A-Za-z]{3})\s*\)",
     ]
-    month_map = {
-        "jan": 1,
-        "fev": 2,
-        "feb": 2,
-        "mar": 3,
-        "abr": 4,
-        "apr": 4,
-        "mai": 5,
-        "may": 5,
-        "jun": 6,
-        "jul": 7,
-        "ago": 8,
-        "aug": 8,
-        "set": 9,
-        "sep": 9,
-        "out": 10,
-        "oct": 10,
-        "nov": 11,
-        "dez": 12,
-        "dec": 12,
-    }
-
-    invoice_date = nearest_date(text, ["Data de emiss", "Fatura Tarihi", "emitida em"])
+    invoice_date = nearest_date(text, ["Data de emiss", "Fatura Tarihi", "emitida em", "De:"])
     year = int(invoice_date[:4]) if invoice_date else None
 
     def parse_loose(value: str) -> str | None:
@@ -307,7 +369,9 @@ def extract_period(text: str) -> tuple[str | None, str | None]:
         if year:
             match = re.search(r"(\d{1,2})\s+([A-Za-zÃÁÂÀÇÉÊÍÓÔÕÚÜçéêãõ]{3})", value, re.I)
             if match:
-                month = month_map.get(fold_text(match.group(2))[:3])
+                month = MONTH_NUMBERS.get(fold_text(match.group(2)).rstrip(".")) or MONTH_NUMBERS.get(
+                    fold_text(match.group(2))[:3]
+                )
                 if month:
                     try:
                         return datetime(year, month, int(match.group(1))).date().isoformat()
@@ -342,10 +406,29 @@ def extract_row(path: Path) -> dict[str, str]:
 
     invoice_type = extract_invoice_type(stem, text)
     invoice_number = extract_invoice_number(text)
-    invoice_date = nearest_date(text, ["Data de Emiss", "Data de emiss", "emitida em", "Fatura Tarihi", "Data de emissão"])
+    invoice_date = nearest_date(
+        text,
+        [
+            "Data de Emiss",
+            "Data de emiss",
+            "emitida em",
+            "Documento emitido a",
+            "Fatura Tarihi",
+            "Data de emissão",
+            "De:",
+        ],
+    )
     payment_due_date = nearest_date(
         text,
-        ["Data limite de pagamento", "DATA LIMITE", "SON ODEME", "débito a partir", "debito a partir"],
+        [
+            "Data limite de pagamento",
+            "DATA LIMITE",
+            "SON ODEME",
+            "débito a partir",
+            "debito a partir",
+            "Até quando posso pagar",
+            "Ate quando posso pagar",
+        ],
     )
     currency = extract_currency(text)
     provider_name = extract_provider(text)
@@ -358,9 +441,21 @@ def extract_row(path: Path) -> dict[str, str]:
 
     total_value = money_near(
         text,
-        ["Total da Fatura", "Valor da fatura atual", "FATURA TUTARI", "Total fatura", "Montante"],
+        [
+            "Total da Fatura",
+            "Valor da fatura atual",
+            "FATURA TUTARI",
+            "Total fatura",
+            "Montante",
+            "Quanto tenho",
+            "a pagar?",
+            "Valor:",
+        ],
     )
-    subtotal = money_near(text, ["Ara Toplam", "Subtotal", "Valor Base", "Valores sem IVA", "Vergiler Haric"])
+    subtotal = money_near(
+        text,
+        ["Ara Toplam", "Subtotal", "Valor Base", "Valores sem IVA", "Vergiler Haric", "Total s/IVA", "Total sem IVA"],
+    )
     total_vat = extract_total_vat(text)
 
     valid_signals = [

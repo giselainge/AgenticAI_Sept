@@ -28,10 +28,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH" \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC \
     INVOICE_DATA_ROOT=/app/data \
     RAG_KB_PATH=/app/runtime/knowledge_base.json \
+    VECTOR_STORE_DIR=/app/runtime/vector_store \
+    OCR_LANGUAGES=por+eng \
+    OCR_DPI=300 \
+    OCR_TIMEOUT_SECONDS=900 \
+    OCR_IMAGE_MIN_DIMENSION=1800 \
+    OCR_IMAGE_MAX_PIXELS=24000000 \
+    OCR_IMAGE_MAX_SCALE=3.0 \
+    OMP_THREAD_LIMIT=2 \
     HEALTHCHECK_PORT=8000 \
-    HEALTHCHECK_PATH=/health
+    HEALTHCHECK_PATH=/ready
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \

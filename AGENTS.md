@@ -26,7 +26,7 @@ Unsupported documents must be classified as `unsupported` or `valid_invoice=fals
 Keep the project as a lightweight Python app unless the user explicitly asks for a deeper packaging refactor. The scripts in `scripts/` are stable commands and should remain runnable:
 
 - `scripts/dashboard.py`: local HTTP dashboard, import workflow, manual review, provider memory updates, CSV export, Gemini import controls, and PDF preview.
-- `scripts/gradio_app.py`: loopback-only local Plan A/Plan B lab and provider-memory viewer; Plan B Gemini extraction and the independent judge are separate explicit opt-in calls.
+- `scripts/gradio_app.py`: loopback-only local Plan A/Plan B inspection lab with required-field comparison, OCR/post-processing diagnostics, sanitized audit events and provider-memory viewer; Plan B Gemini extraction and the independent judge are separate explicit opt-in calls.
 - `scripts/ocr_text_extraction.py`: OCR/text extraction pipeline for PDFs and image files.
 - `scripts/extract_invoice_fields.py`: deterministic parser that reads OCR text files and writes structured invoice rows.
 - `scripts/second_pass_llm.py`: Gemini PDF second-pass orchestration with RAG context, TXT parsing, normalization, validation, and stable artifact output.

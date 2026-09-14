@@ -5,7 +5,9 @@ param(
     [string]$StackName = "agentic-invoice-demo",
     [ValidateRange(1, 12)][int]$Hours = 3,
     [ValidateSet("t3.large", "t3.xlarge")][string]$InstanceType = "t3.large",
-    [string]$AllowedCidr = ""
+    [string]$AllowedCidr = "",
+    [ValidatePattern("^[a-z0-9][a-z0-9._/-]*(?::[a-zA-Z0-9][a-zA-Z0-9._-]*)?$")]
+    [string]$ImageTag = "agentic-ai-billing-agent:local"
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,8 +24,8 @@ function Invoke-Aws {
 if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
     throw "AWS CLI v2 is required. Install it, then run 'aws configure sso --profile $Profile'."
 }
-if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
-    throw "tar is required to package the application. Windows 10/11 includes tar.exe."
+if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    throw "Docker is required. Run the local container test before deploying."
 }
 
 & aws sts get-caller-identity --profile $Profile --region $Region --no-cli-pager | Out-Null
@@ -44,15 +46,33 @@ if ($AllowedCidr -eq "0.0.0.0/0") {
     throw "Refusing a public-to-everyone deployment. Supply your public IP as a /32 CIDR."
 }
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $template = Join-Path $PSScriptRoot "ephemeral-stack.yaml"
 $expiresAt = (Get-Date).ToUniversalTime().AddHours($Hours).ToString("yyyy-MM-ddTHH:mm:ss")
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "billing-aws-$PID"
-$bundle = Join-Path $tempRoot "application.tar.gz"
+$imageArchive = Join-Path $tempRoot "application-image.tar"
 $requestFile = Join-Path $tempRoot "ssm-request.json"
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 try {
+    $imageId = [string](& docker image inspect --format "{{.Id}}" $ImageTag 2>$null)
+    $imageId = $imageId.Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $imageId) {
+        throw "Local image '$ImageTag' was not found. Run '.\deploy\local.ps1' and test it first."
+    }
+    $qualityFingerprint = [string](& docker run --rm --read-only `
+        --tmpfs /tmp:rw,nosuid,nodev,size=256m `
+        --tmpfs /app/data:rw,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=0770 `
+        --tmpfs /app/runtime:rw,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=0770 `
+        $ImageTag python scripts/runtime_check.py --strict --fingerprint-only)
+    $qualityFingerprint = $qualityFingerprint.Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $qualityFingerprint) {
+        throw "The locally tested image failed the strict OCR runtime check."
+    }
+    Write-Host "Packaging the tested image $imageId (quality profile $qualityFingerprint)..."
+    & docker save --output $imageArchive $ImageTag
+    if ($LASTEXITCODE -ne 0) { throw "Could not export local image '$ImageTag'." }
+    $imageSha256 = (Get-FileHash -Algorithm SHA256 -Path $imageArchive).Hash.ToLowerInvariant()
+
     Write-Host "Creating/updating $StackName in $Region; automatic deletion: $expiresAt UTC"
     Invoke-Aws cloudformation deploy `
         --profile $Profile `
@@ -73,19 +93,7 @@ try {
     $instanceId = $outputMap["InstanceId"]
     $bucket = $outputMap["DeploymentBucketName"]
 
-    Push-Location $repoRoot
-    try {
-        & tar -czf $bundle `
-            --exclude="rag/knowledge_base.json" `
-            --exclude="rag/last_retrieval_context.json" `
-            --exclude="*/__pycache__" `
-            .dockerignore Dockerfile pyproject.toml uv.lock invoice_parser llm rag scripts vector_store
-        if ($LASTEXITCODE -ne 0) { throw "Application packaging failed." }
-    }
-    finally {
-        Pop-Location
-    }
-    Invoke-Aws s3 cp $bundle "s3://$bucket/application.tar.gz" --profile $Profile --region $Region --only-show-errors
+    Invoke-Aws s3 cp $imageArchive "s3://$bucket/application-image.tar" --profile $Profile --region $Region --only-show-errors
 
     Write-Host "Waiting for the EC2 instance to register with Systems Manager..."
     $online = $false
@@ -103,18 +111,20 @@ try {
 
     $commands = @(
         "set -euxo pipefail",
-        "mkdir -p /opt/billing/app /opt/billing/data /opt/billing/runtime",
-        "aws s3 cp s3://$bucket/application.tar.gz /tmp/application.tar.gz",
-        "find /opt/billing/app -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +",
-        "tar -xzf /tmp/application.tar.gz -C /opt/billing/app",
+        "mkdir -p /opt/billing/data /opt/billing/runtime",
+        "aws s3 cp s3://$bucket/application-image.tar /tmp/application-image.tar",
+        "echo '$imageSha256  /tmp/application-image.tar' | sha256sum --check -",
+        "docker load --input /tmp/application-image.tar",
+        "rm -f /tmp/application-image.tar",
         "chown -R 10001:10001 /opt/billing/data /opt/billing/runtime",
-        "cd /opt/billing/app",
-        "docker build --pull --tag agentic-ai-billing-agent:demo .",
-        "docker rm -f billing-api billing-dashboard 2>/dev/null || true",
-        "docker run -d --name billing-api --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --tmpfs /tmp:rw,nosuid,nodev,size=512m -p 8000:8000 -e INVOICE_DATA_ROOT=/app/data -e RAG_KB_PATH=/app/runtime/knowledge_base.json -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime agentic-ai-billing-agent:demo",
-        "docker run -d --name billing-dashboard --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --tmpfs /tmp:rw,nosuid,nodev,size=512m -p 8501:8501 -e INVOICE_DATA_ROOT=/app/data -e RAG_KB_PATH=/app/runtime/knowledge_base.json -e HEALTHCHECK_PORT=8501 -e HEALTHCHECK_PATH=/ -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime agentic-ai-billing-agent:demo python scripts/dashboard.py --host 0.0.0.0 --port 8501",
-        "curl --fail --retry 12 --retry-delay 5 http://127.0.0.1:8000/health",
-        "curl --fail --retry 12 --retry-delay 5 http://127.0.0.1:8501/ >/dev/null"
+        "docker rm -f billing-api billing-dashboard billing-gradio 2>/dev/null || true",
+        "docker run -d --name billing-api --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --log-opt max-size=10m --log-opt max-file=2 --tmpfs /tmp:rw,nosuid,nodev,size=1g -p 8000:8000 -e INVOICE_DATA_ROOT=/app/data -e RAG_KB_PATH=/app/runtime/knowledge_base.json -e VECTOR_STORE_DIR=/app/runtime/vector_store -e OCR_LANGUAGES=por+eng -e OCR_DPI=300 -e OCR_TIMEOUT_SECONDS=900 -e OCR_IMAGE_MIN_DIMENSION=1800 -e OCR_IMAGE_MAX_PIXELS=24000000 -e OCR_IMAGE_MAX_SCALE=3.0 -e OMP_THREAD_LIMIT=2 -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime $ImageTag",
+        "docker run -d --name billing-dashboard --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --log-opt max-size=10m --log-opt max-file=2 --tmpfs /tmp:rw,nosuid,nodev,size=1g -p 8501:8501 -e INVOICE_DATA_ROOT=/app/data -e RAG_KB_PATH=/app/runtime/knowledge_base.json -e VECTOR_STORE_DIR=/app/runtime/vector_store -e OCR_LANGUAGES=por+eng -e OCR_DPI=300 -e OCR_TIMEOUT_SECONDS=900 -e OCR_IMAGE_MIN_DIMENSION=1800 -e OCR_IMAGE_MAX_PIXELS=24000000 -e OCR_IMAGE_MAX_SCALE=3.0 -e OMP_THREAD_LIMIT=2 -e HEALTHCHECK_PORT=8501 -e HEALTHCHECK_PATH=/ -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime $ImageTag python scripts/dashboard.py --host 0.0.0.0 --port 8501",
+        "docker run -d --name billing-gradio --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --log-opt max-size=10m --log-opt max-file=2 --tmpfs /tmp:rw,nosuid,nodev,size=1g -p 7860:7860 -e INVOICE_DATA_ROOT=/app/data -e RAG_KB_PATH=/app/runtime/knowledge_base.json -e VECTOR_STORE_DIR=/app/runtime/vector_store -e OCR_LANGUAGES=por+eng -e OCR_DPI=300 -e OCR_TIMEOUT_SECONDS=900 -e OCR_IMAGE_MIN_DIMENSION=1800 -e OCR_IMAGE_MAX_PIXELS=24000000 -e OCR_IMAGE_MAX_SCALE=3.0 -e OMP_THREAD_LIMIT=2 -e ALLOW_CONTAINER_BIND=1 -e HEALTHCHECK_PORT=7860 -e HEALTHCHECK_PATH=/ -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime $ImageTag python scripts/gradio_app.py --host 0.0.0.0 --port 7860",
+        "docker run --rm --read-only --tmpfs /tmp:rw,nosuid,nodev,size=256m --tmpfs /app/data:rw,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=0770 --tmpfs /app/runtime:rw,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=0770 $ImageTag python scripts/runtime_check.py --strict --expect-fingerprint $qualityFingerprint",
+        "curl --fail --retry 12 --retry-delay 5 http://127.0.0.1:8000/ready >/dev/null",
+        "curl --fail --retry 12 --retry-delay 5 http://127.0.0.1:8501/ >/dev/null",
+        "curl --fail --retry 12 --retry-delay 5 http://127.0.0.1:7860/ >/dev/null"
     )
     $request = @{
         DocumentName = "AWS-RunShellScript"
@@ -127,7 +137,7 @@ try {
     $commandId = & aws ssm send-command --profile $Profile --region $Region --cli-input-json "file://$requestFile" --query "Command.CommandId" --output text --no-cli-pager
     if ($LASTEXITCODE -ne 0 -or -not $commandId) { throw "Could not start the remote deployment command." }
 
-    Write-Host "Building and starting the containers on $instanceId..."
+    Write-Host "Loading the locally tested image and starting the containers on $instanceId..."
     $terminalStatus = ""
     for ($attempt = 1; $attempt -le 240; $attempt++) {
         $terminalStatus = & aws ssm get-command-invocation --profile $Profile --region $Region --command-id $commandId --instance-id $instanceId --query "Status" --output text --no-cli-pager 2>$null
@@ -140,8 +150,11 @@ try {
     }
 
     Write-Host "Deployment ready."
-    Write-Host "API health: $($outputMap['ApiUrl'])/health"
+    Write-Host "Image:      $imageId"
+    Write-Host "OCR profile: $qualityFingerprint"
+    Write-Host "API ready:  $($outputMap['ApiUrl'])/ready"
     Write-Host "Dashboard:  $($outputMap['DashboardUrl'])"
+    Write-Host "Gradio lab: $($outputMap['GradioUrl'])"
     Write-Host "Auto-delete: $($outputMap['ExpiresAtUtc']) UTC"
     Write-Host "Delete early: .\deploy\aws\destroy.ps1 -Profile $Profile -Region $Region -StackName $StackName"
 }

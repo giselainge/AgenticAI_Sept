@@ -25,6 +25,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=os.getenv("GEMINI_MODEL") or "gemini-3.5-flash")
     parser.add_argument("--judge-base-url", default=os.getenv("JUDGE_BASE_URL", ""))
     parser.add_argument("--judge-model", default=os.getenv("JUDGE_MODEL", ""))
+    parser.add_argument(
+        "--judge-provider",
+        choices=["gemini", "openai_compatible"],
+        default=os.getenv("JUDGE_PROVIDER", "openai_compatible"),
+    )
     return parser
 
 
@@ -50,12 +55,21 @@ def main() -> int:
     )
     if not result.plan_b.llm_used:
         print("Plan B retained deterministic extraction because a PDF/API key was unavailable or the LLM call failed.")
-    if args.judge_base_url and args.judge_model:
+    judge_key = (
+        os.getenv("GEMINI_API_KEY", "")
+        if args.judge_provider == "gemini"
+        else os.getenv("JUDGE_API_KEY", "")
+    )
+    judge_configured = bool(args.judge_model) and (
+        bool(judge_key) if args.judge_provider == "gemini" else bool(args.judge_base_url)
+    )
+    if judge_configured:
         judged = judge_ab_artifact(
             result.artifact_path,
             base_url=args.judge_base_url,
-            api_key=os.getenv("JUDGE_API_KEY", ""),
+            api_key=judge_key,
             model=args.judge_model,
+            provider=args.judge_provider,
         )
         assert judged.llm_judge is not None
         print(

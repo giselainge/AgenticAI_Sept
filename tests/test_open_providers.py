@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from invoice_parser.providers import canonical_provider
+from invoice_parser.providers import canonical_provider, extract_provider_name
 from rag.adaptive_rag import build_extraction_context, build_llm_rag_snippets, load_kb, record_review_corrections
 from scripts.dashboard import provider_validated_count
 from scripts.extract_invoice_fields import extract_provider, extract_row, extract_invoice_type
@@ -46,6 +46,12 @@ def test_provider_is_not_inferred_from_electricity_or_incidental_brand():
     assert canonical_provider("", "Fatura: FT 123\nEletricidade") == "unknown"
 
 
+def test_known_provider_below_long_header_is_still_recognized():
+    text = "\n".join([f"Account detail {index}" for index in range(14)] + ["GALP", "Total: 10,00 EUR"])
+
+    assert extract_provider_name(text) == "GALP"
+
+
 def test_unrecognized_document_remains_invalid(tmp_path):
     source = tmp_path / "receipt.txt"
     source.write_text("Fornecedor: Office Supplies, Lda.\nFatura: FT 123\nData de emissão: 14/09/2026\n"
@@ -55,6 +61,33 @@ def test_unrecognized_document_remains_invalid(tmp_path):
     assert row["invoice_type"] == "unsupported"
     assert "Unsupported document" in row["extraction_warnings"]
     assert extract_invoice_type("bill", "Pagamento de material de escritório") == "unsupported"
+
+
+def test_portuguese_electricity_layout_with_named_dates_is_extracted(tmp_path):
+    source = tmp_path / "luz_invoice.txt"
+    source.write_text(
+        """EDP Comercial - Comercialização de Energia, S.A.
+Fatura nº FT2026 A123/456 De: 14 de setembro de 2026 Valor: 52,30 EUR
+Período de faturação: 15 de agosto a 14 de setembro de 2026
+Serviços - EDP Full
+Consumo real 120 kWh
+Total s/IVA 42,52 EUR
+Total da Fatura: 52,30 EUR
+""",
+        encoding="utf-8",
+    )
+
+    row = extract_row(source)
+
+    assert row["invoice_type"] == "electricity"
+    assert row["provider_name"] == "EDP"
+    assert row["invoice_number"].startswith("FT2026")
+    assert row["invoice_date"] == "2026-09-14"
+    assert row["consumption_start_date"] == "2026-08-15"
+    assert row["consumption_end_date"] == "2026-09-14"
+    assert row["service_plan_name"] == "EDP Full"
+    assert row["units_of_consumption"] == "120.00"
+    assert row["total_value"] == "52.30"
 
 
 def test_ocr_quality_is_independent_of_known_brands():

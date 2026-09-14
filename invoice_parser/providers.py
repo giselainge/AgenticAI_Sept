@@ -70,6 +70,14 @@ def extract_provider_name(text: str) -> str | None:
             return PROVIDER_NAMES[known]
         if COMPANY_SUFFIX.search(line.rstrip(" ,;")) or UTILITY_NAME.search(folded):
             return line
+
+    # Established layouts sometimes place the supplier brand below a long
+    # account/address header. These aliases are fallbacks, not an allowlist:
+    # explicit seller labels and arbitrary company names above still win.
+    folded_text = fold_text(text)
+    for provider_id, pattern in PROVIDER_ALIASES:
+        if re.search(pattern, folded_text):
+            return PROVIDER_NAMES[provider_id]
     return None
 
 

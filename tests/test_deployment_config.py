@@ -40,6 +40,8 @@ def test_docker_image_has_ocr_runtime_and_non_root_user() -> None:
     assert "requirements.txt" not in dockerfile
     assert "COPY .env" not in dockerfile
     assert "COPY --chown=${APP_UID}:${APP_GID} vector_store ./vector_store" in dockerfile
+    assert "OCR_LANGUAGES=por+eng" in dockerfile
+    assert "HEALTHCHECK_PATH=/ready" in dockerfile
 
 
 def test_compose_runs_api_and_dashboard_with_persistent_runtime_paths() -> None:
@@ -49,10 +51,13 @@ def test_compose_runs_api_and_dashboard_with_persistent_runtime_paths() -> None:
     for service in compose["services"].values():
         assert service["read_only"] is True
         assert "ALL" in service["cap_drop"]
-        assert "./data:/app/data" in service["volumes"]
+        assert "./data/data:/app/data" in service["volumes"]
         assert "./runtime:/app/runtime" in service["volumes"]
         assert service["environment"]["RAG_KB_PATH"] == "/app/runtime/knowledge_base.json"
         assert "GEMINI_API_KEY" not in service["environment"]
+        assert "JUDGE_API_KEY" not in service["environment"]
+        assert service["environment"]["OCR_LANGUAGES"] == "${OCR_LANGUAGES:-por+eng}"
+        assert service["platform"] == "linux/amd64"
     assert "127.0.0.1" in compose["services"]["api"]["ports"][0]
     assert "scripts/dashboard.py" in compose["services"]["dashboard"]["command"]
     assert "scripts/gradio_app.py" in compose["services"]["gradio"]["command"]
@@ -67,7 +72,7 @@ def test_cloudformation_stack_is_restricted_managed_and_self_deleting() -> None:
     assert resources["ApplicationInstance"]["Properties"]["MetadataOptions"]["HttpTokens"] == "required"
     assert "AmazonSSMManagedInstanceCore" in resources["InstanceRole"]["Properties"]["ManagedPolicyArns"][0]
     ingress = resources["ApplicationSecurityGroup"]["Properties"]["SecurityGroupIngress"]
-    assert {rule["FromPort"] for rule in ingress} == {8000, 8501}
+    assert {rule["FromPort"] for rule in ingress} == {7860, 8000, 8501}
     assert all(rule["CidrIp"] == {"Ref": "AllowedCidr"} for rule in ingress)
     assert resources["CleanupSchedule"]["Type"] == "AWS::Scheduler::Schedule"
     assert resources["CleanupSchedule"]["Properties"]["ActionAfterCompletion"] == "DELETE"
@@ -76,7 +81,7 @@ def test_cloudformation_stack_is_restricted_managed_and_self_deleting() -> None:
     assert "delete_objects" in cleanup_code
 
 
-def test_deployment_bundle_excludes_secrets_private_data_and_local_memory() -> None:
+def test_deployment_transfers_the_tested_image_without_secrets_or_private_data() -> None:
     dockerignore = (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8")
     gitignore = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
     deploy_script = (PROJECT_ROOT / "deploy" / "aws" / "deploy.ps1").read_text(encoding="utf-8")
@@ -90,17 +95,32 @@ def test_deployment_bundle_excludes_secrets_private_data_and_local_memory() -> N
     assert "data" in dockerignore
     assert "data/" in gitignore
     assert "rag/knowledge_base.json" in dockerignore
-    assert '--exclude="rag/knowledge_base.json"' in deploy_script
-    assert "pyproject.toml uv.lock" in deploy_script
-    assert "scripts vector_store" in deploy_script
+    assert "docker save --output" in deploy_script
+    assert "application-image.tar" in deploy_script
+    assert "Get-FileHash -Algorithm SHA256" in deploy_script
+    assert "docker load --input" in deploy_script
+    assert "docker build" not in deploy_script
     assert "requirements.txt" not in deploy_script
     assert "GEMINI_API_KEY" not in deploy_script
+    assert "JUDGE_API_KEY" not in deploy_script
     assert "iseg" not in deployment_files.lower()
     assert "ec2-108-132-55-75" not in deployment_files
     assert "HEALTHCHECK_PORT=8501" in deploy_script
     assert "HEALTHCHECK_PATH=/" in deploy_script
+    assert "billing-gradio" in deploy_script
+    assert "ALLOW_CONTAINER_BIND=1" in deploy_script
+    assert "scripts/runtime_check.py --strict --expect-fingerprint" in deploy_script
     assert "0.0.0.0/0" in deploy_script  # explicitly rejected by the script
     assert "Refusing a public-to-everyone deployment" in deploy_script
+
+
+def test_local_parity_script_builds_and_checks_the_same_image() -> None:
+    script = (PROJECT_ROOT / "deploy" / "local.ps1").read_text(encoding="utf-8")
+
+    assert "docker compose build --pull" in script
+    assert "scripts/runtime_check.py --strict --fingerprint-only" in script
+    assert "agentic-ai-billing-agent:local" in script
+    assert "http://127.0.0.1:7860/" in script
 
 
 def test_uv_metadata_is_the_only_python_dependency_source() -> None:

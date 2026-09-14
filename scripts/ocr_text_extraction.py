@@ -15,6 +15,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from invoice_parser.ocr_config import (
+    OCR_DPI,
+    OCR_IMAGE_MAX_PIXELS,
+    OCR_IMAGE_MAX_SCALE,
+    OCR_IMAGE_MIN_DIMENSION,
+    OCR_LANGUAGES,
+    OCR_TIMEOUT_SECONDS,
+)
 from invoice_parser.paths import first_existing_data_dir, project_data_root
 from invoice_parser.text_utils import fold_text
 
@@ -415,7 +423,7 @@ def run_ocrmypdf(input_pdf: Path, output_pdf: Path, enhanced: bool = False) -> t
     command = [
         "ocrmypdf",
         "--language",
-        "por+eng",
+        "+".join(OCR_LANGUAGES),
         "--deskew",
         "--rotate-pages",
     ]
@@ -423,7 +431,7 @@ def run_ocrmypdf(input_pdf: Path, output_pdf: Path, enhanced: bool = False) -> t
     if enhanced:
         if shutil.which("unpaper") is not None:
             command.extend(["--clean", "--clean-final"])
-        command.extend(["--oversample", "300"])
+        command.extend(["--oversample", str(OCR_DPI)])
 
     command.extend(["--force-ocr", str(input_pdf), str(output_pdf)])
 
@@ -433,7 +441,7 @@ def run_ocrmypdf(input_pdf: Path, output_pdf: Path, enhanced: bool = False) -> t
             check=False,
             capture_output=True,
             text=True,
-            timeout=900,
+            timeout=OCR_TIMEOUT_SECONDS,
         )
     except FileNotFoundError:
         return False, ["OCRmyPDF is not installed or not on PATH."]
@@ -520,6 +528,62 @@ def build_ocr_pass_result(
         errors=errors or [],
         warnings=quality.get("warnings", []),
     )
+
+
+def run_tesseract_image_pass(
+    source_file: Path,
+    searchable_pdf: Path,
+    text_output_dir: Path,
+    *,
+    enhanced: bool,
+) -> OcrPassResult:
+    """Run one local image OCR pass with bounded enhancement for small scans."""
+    from PIL import Image, ImageFilter, ImageOps
+
+    available_languages = set(pytesseract.get_languages(config=""))
+    languages = "+".join(language for language in OCR_LANGUAGES if language in available_languages)
+    label = "tesseract_image_enhanced" if enhanced else "tesseract_image_baseline"
+    with Image.open(source_file) as opened:
+        image = ImageOps.exif_transpose(opened).convert("RGB")
+        if enhanced:
+            minimum_dimension = max(1, min(image.width, image.height))
+            scale = min(OCR_IMAGE_MAX_SCALE, OCR_IMAGE_MIN_DIMENSION / minimum_dimension)
+            max_scale_for_pixels = (OCR_IMAGE_MAX_PIXELS / max(1, image.width * image.height)) ** 0.5
+            scale = max(1.0, min(scale, max_scale_for_pixels))
+            if scale > 1.05:
+                image = image.resize(
+                    (round(image.width * scale), round(image.height * scale)),
+                    Image.Resampling.LANCZOS,
+                )
+            image = ImageOps.autocontrast(ImageOps.grayscale(image), cutoff=1)
+            image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=180, threshold=3))
+        raw_text = pytesseract.image_to_string(
+            image,
+            lang=languages or None,
+            config=f"--oem 1 --psm 3 --dpi {OCR_DPI} -c preserve_interword_spaces=1",
+        )
+
+    result = build_ocr_pass_result(
+        label,
+        source_file,
+        searchable_pdf,
+        raw_text,
+        [raw_text],
+        text_output_dir,
+    )
+    raw_file, cleaned_file, diagnostics_file = save_pass_text_files(
+        label,
+        source_file,
+        result.raw_text,
+        result.cleaned_text,
+        result.quality or {},
+        text_output_dir,
+        searchable_pdf,
+    )
+    result.raw_text_file = raw_file
+    result.cleaned_text_file = cleaned_file
+    result.diagnostics_file = diagnostics_file
+    return result
 
 
 def compare_ocr_results(baseline: dict[str, Any], enhanced: dict[str, Any]) -> dict[str, Any]:
@@ -819,6 +883,7 @@ def process_file(
     source_file: str | Path,
     baseline_only: bool = False,
     force_enhanced: bool = False,
+    refresh: bool = False,
     ocr_quality_threshold: float = DEFAULT_OCR_THRESHOLD,
     text_output_dir: str | Path = EXTRACTED_TEXT_DIR,
     pdf_output_dir: str | Path = PDF_DIR,
@@ -847,7 +912,7 @@ def process_file(
         return result
 
     selected_path = output_dirs["text"] / f"{source.stem}.txt"
-    if selected_path.exists():
+    if selected_path.exists() and not refresh:
         if debug:
             print(f"{source.name}: skipped existing text file {selected_path.name}")
         return cached_text_result(
@@ -914,33 +979,53 @@ def process_file(
     result.requires_ocr = True
     result.warnings.extend(tool_missing_warnings())
 
-    if source.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS and shutil.which("ocrmypdf") is None:
+    # Image invoices always use this path. This keeps preprocessing identical
+    # in bare local runs and in the Docker image, where OCRmyPDF is installed.
+    if source.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
         try:
-            from PIL import Image
-
-            available_languages = set(pytesseract.get_languages(config=""))
-            languages = "+".join(language for language in ("por", "eng") if language in available_languages)
-            with Image.open(source) as image:
-                raw_text = pytesseract.image_to_string(image, lang=languages or None)
-            cleaned = clean_text(raw_text)
-            quality = score_ocr_quality(cleaned, [cleaned])
-            selected_pass = build_ocr_pass_result(
-                "tesseract_image",
+            baseline_pass = run_tesseract_image_pass(
                 source,
                 input_pdf,
-                raw_text,
-                [cleaned],
                 output_dirs["text"],
+                enhanced=False,
             )
+            result.baseline = baseline_pass
+            selected_pass = baseline_pass
+            selected_label = baseline_pass.method or "tesseract_image_baseline"
+
+            baseline_quality = baseline_pass.quality or {}
+            if not baseline_only and (force_enhanced or should_run_enhanced_ocr(baseline_quality, ocr_quality_threshold)):
+                enhanced_pass = run_tesseract_image_pass(
+                    source,
+                    input_pdf,
+                    output_dirs["text"],
+                    enhanced=True,
+                )
+                result.enhanced = enhanced_pass
+                comparison = compare_ocr_results(asdict(baseline_pass), asdict(enhanced_pass))
+                comparison_path = output_dirs["text"] / f"{source.stem}_ocr_comparison.txt"
+                write_text_file(
+                    comparison_path,
+                    comparison_text(source, baseline_pass, enhanced_pass, comparison),
+                )
+                result.ocr_comparison_file = str(comparison_path)
+                result.warnings.append(comparison["reason"])
+                if comparison["selected_result"] == "enhanced_ocr":
+                    selected_pass = enhanced_pass
+                    selected_label = enhanced_pass.method or "tesseract_image_enhanced"
+
+            quality = selected_pass.quality or {}
             write_text_file(
                 selected_path,
-                selected_text_output(source, "tesseract_image", quality, "tesseract_image", cleaned),
+                selected_text_output(source, selected_label, quality, selected_label, selected_pass.cleaned_text),
             )
-            result.extraction_method = "tesseract_image"
-            result.selected_text = cleaned
+            result.extraction_method = selected_label
+            result.selected_text = selected_pass.cleaned_text
             result.selected_text_file = str(selected_path)
             result.searchable_pdf = str(input_pdf)
-            result.baseline = selected_pass
+            result.raw_text_file = selected_pass.raw_text_file
+            result.cleaned_text_file = selected_pass.cleaned_text_file
+            result.diagnostics_file = selected_pass.diagnostics_file
             result.quality_score = float(quality.get("score", 0.0))
             update_review_flags(result, quality)
             return result
@@ -1033,6 +1118,7 @@ def process_batch(
     input_dir: str | Path = RAW_DIR,
     baseline_only: bool = False,
     force_enhanced: bool = False,
+    refresh: bool = False,
     ocr_quality_threshold: float = DEFAULT_OCR_THRESHOLD,
     text_output_dir: str | Path = EXTRACTED_TEXT_DIR,
     pdf_output_dir: str | Path = PDF_DIR,
@@ -1061,6 +1147,7 @@ def process_batch(
                 file_path,
                 baseline_only=baseline_only,
                 force_enhanced=force_enhanced,
+                refresh=refresh,
                 ocr_quality_threshold=ocr_quality_threshold,
                 text_output_dir=text_output_dir,
                 pdf_output_dir=pdf_output_dir,
@@ -1113,6 +1200,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", default=str(RAW_DIR), help="Input file or directory. Defaults to data/data_raw.")
     parser.add_argument("--baseline-only", action="store_true", help="Disable enhanced OCR even if baseline quality is weak.")
     parser.add_argument("--force-enhanced", action="store_true", help="Run enhanced OCR whenever OCR is required.")
+    parser.add_argument("--refresh", action="store_true", help="Regenerate OCR text instead of using the selected-text cache.")
     parser.add_argument(
         "--ocr-quality-threshold",
         type=float,
@@ -1138,6 +1226,7 @@ def main() -> list[Layer6Result]:
                 input_path,
                 baseline_only=args.baseline_only,
                 force_enhanced=args.force_enhanced,
+                refresh=args.refresh,
                 ocr_quality_threshold=args.ocr_quality_threshold,
                 text_output_dir=args.text_output_dir,
                 pdf_output_dir=args.pdf_output_dir,
@@ -1151,6 +1240,7 @@ def main() -> list[Layer6Result]:
             input_path,
             baseline_only=args.baseline_only,
             force_enhanced=args.force_enhanced,
+            refresh=args.refresh,
             ocr_quality_threshold=args.ocr_quality_threshold,
             text_output_dir=args.text_output_dir,
             pdf_output_dir=args.pdf_output_dir,

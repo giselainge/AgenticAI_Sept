@@ -162,7 +162,7 @@ $env:GEMINI_MODEL="gemini-3.5-flash"
 ```
 
 Notes:
-- The dashboard also has a GEMINI_API_KEY field in **Import Invoices**. It is used only for to import request and is not saved.
+- The dashboard also has a GEMINI_API_KEY field in **Import Invoices**. It is used only for that import request and is not saved.
 - Gemini PDF extraction uses the locked `google-genai` dependency declared in `pyproject.toml`.
 - Tests continue to use mocked callers and do not call the real API.
 
@@ -180,9 +180,13 @@ Start the loopback-only server:
 uv run python scripts\gradio_app.py
 ```
 
-Open [http://127.0.0.1:7860](http://127.0.0.1:7860). Upload an invoice PDF or image; the app runs the OCR stage automatically. The interface shows Plan A and Plan B side by side, the five Plan B agent events, comparison metrics, the local provider knowledge base, a FAISS index rebuild action, and a human verdict control.
+Open [http://127.0.0.1:7860](http://127.0.0.1:7860). Upload an invoice PDF or image; the app runs the OCR stage automatically. The interface shows required-field retrieval percentages, a 19-field Plan A/Plan B comparison table, OCR and post-processing diagnostics, the five Plan B agent events, a local extraction audit log, the provider knowledge base, a FAISS index rebuild action, the optional judge, and a human verdict control.
+
+Each A/B artifact records sanitized preprocessing metadata and stage decisions. It does not store the OCR text, model prompts, or API keys in the audit log. The structured plan rows still contain invoice fields and remain under the ignored local `data/` tree.
 
 Plan B Gemini extraction is disabled by default. Without it, Plan B still runs classification, provider-memory retrieval, deterministic fallback extraction, validation, and review routing. Enable **Optional Plan B Gemini extraction** and provide a request-only key to run the stronger OCR + LLM + agent comparison. The uploaded invoice, OCR evidence, and retrieved provider context are sent to Gemini only for that explicitly enabled run; the key is not written to the A/B artifact.
+
+The **Four-case assessment** tab compares OCR + rules, OCR + direct Gemini, OCR + agentic rules, and OCR + Gemini inside the agentic workflow. Leave the key blank to run only the two offline cases. Providing a key and clicking **Run four cases** performs two Gemini calls so the direct and RAG-assisted candidates remain separate. The key is not stored in the result artifact.
 
 The **Optional independent LLM judge** panel can compare both results with the OCR evidence through a user-configured OpenAI-compatible endpoint. It sends invoice text only after **Run LLM judge** is clicked and never replaces the human verdict. Configure the fields in the panel or set:
 

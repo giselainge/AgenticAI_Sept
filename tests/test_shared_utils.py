@@ -1,8 +1,9 @@
 from invoice_parser.paths import (
     DATA_ROOT,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_PDF_DIR,
+    DEFAULT_RAW_DIR,
     DEFAULT_TEXT_DIR,
-    PROJECT_ROOT,
     project_data_root,
 )
 from invoice_parser.schema import FIELDNAMES
@@ -10,8 +11,10 @@ from invoice_parser.text_utils import fold_text, normalize_money, normalize_spac
 
 
 def test_project_paths_are_repo_relative() -> None:
-    assert DATA_ROOT == PROJECT_ROOT / "data"
+    assert DATA_ROOT == project_data_root()
     assert DEFAULT_TEXT_DIR == DATA_ROOT / "data_txt"
+    assert DEFAULT_RAW_DIR == DATA_ROOT / "data_raw"
+    assert DEFAULT_PDF_DIR == DATA_ROOT / "data_pdf"
     assert DEFAULT_OUTPUT_DIR == DATA_ROOT / "data_processed"
 
 

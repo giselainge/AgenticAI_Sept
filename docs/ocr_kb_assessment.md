@@ -6,17 +6,17 @@ Assessment date: 2026-09-14
 
 ## Current score
 
-The current evidence supports an overall **5.8/10** for the repository against the complete assessment rubric. This is an engineering-readiness estimate rather than an official grade.
+The current evidence supports an overall **6.2/10** for the repository against the complete assessment rubric. This is an engineering-readiness estimate rather than an official grade.
 
 | Assessment area | Weight | Current points | Evidence-based finding |
 | --- | ---: | ---: | --- |
-| Extraction accuracy | 30 | 14 | All 55 OCR-text inputs execute, but supported invoices average only 51.11% required-field completion. No human-labeled field accuracy set exists. |
+| Extraction accuracy | 30 | 18 | All 55 OCR-text inputs execute and supported invoices average 64.68% required-field completion after the OCR regression fix. No human-labeled field accuracy set exists. |
 | Agentic behavior | 20 | 15 | Plan B has five typed, sequential agents, auditable traces, deterministic validation and routing, plus an independent optional judge. The local offline path produces no extraction improvement and has no autonomous feedback/revalidation loop. |
 | RAG and adaptive memory | 20 | 11 | Provider-scoped tips, OCR corrections, layouts, examples, feedback, validation history, FAISS, LlamaIndex and Torch are implemented. Storage is JSON/CSV rather than the required persistent SQL/NoSQL store, and the index is not automatically refreshed after feedback. |
 | HITL | 10 | 6 | Review, correction notes, approve/reject decisions and the five-prior-approval rule exist. Low model confidence is not consistently used for routing, and feedback does not automatically trigger extraction and validation again. |
 | Deployment and observability | 10 | 4 | Docker, Compose, health checks and ephemeral AWS definitions exist, but no current Docker/AWS execution evidence is available. Deployment is intentionally deferred. |
-| Code and documentation | 10 | 8 | The project uses `pyproject.toml` and `uv.lock`, has privacy boundaries and 73 passing tests. Some presentation claims and environment/test counts are stale. |
-| **Total** | **100** | **58** | **5.8/10** |
+| Code and documentation | 10 | 8 | The project uses `pyproject.toml` and `uv.lock`, has privacy boundaries and 79 passing tests. Some presentation claims remain stale. |
+| **Total** | **100** | **62** | **6.2/10** |
 
 ## Four-option field-retrieval comparison
 
@@ -26,16 +26,16 @@ The local diagnostic processed 55 of 55 available OCR text files. Fifty-two were
 
 | Option | Electricity | Natural gas | Telecom | Water | Supported overall | Status |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| OCR + deterministic fields (Plan A) | 10.53% | 47.85% | 60.99% | 54.85% | 51.11% | Measured locally |
+| OCR + deterministic fields (Plan A) | 52.63% | 62.20% | 68.11% | 66.20% | 64.68% | Measured locally |
 | OCR + LLM | N/A | N/A | N/A | N/A | N/A | No explicitly enabled working extraction model |
-| OCR + agentic rules | 10.53% | 47.85% | 60.99% | 54.85% | 51.11% | Measured locally |
+| OCR + agentic rules | 52.63% | 62.20% | 68.11% | 66.20% | 64.68% | Measured locally |
 | OCR + LLM inside Plan B | N/A | N/A | N/A | N/A | N/A | No explicitly enabled working extraction model |
 
-The offline Plan B changed zero fields across the 55 files because its Extraction Agent retained the deterministic result when no model was configured. Both measured options produced 202 validation errors in aggregate. Their routes were 45 manual-review decisions and 10 unsupported rejections.
+The offline Plan B changed zero fields across the 55 files because its Extraction Agent retained the deterministic result when no model was configured. Both measured options produced 119 validation errors in aggregate. Their routes were 52 manual-review decisions and 3 unsupported rejections.
 
 The raw diagnostic summary is stored locally under the ignored private-data tree at `data/data/data_processed/agentic_ab_tests/preprocessed_offline/preprocessed_field_retrieval_summary.json`.
 
-## OCR faithfulness and quality: 5.5/10
+## OCR faithfulness and quality: 6.5/10
 
 The implementation is faithful to the requested local preprocessing design in several ways:
 
@@ -46,9 +46,9 @@ The implementation is faithful to the requested local preprocessing design in se
 - it does not restrict processing to a fixed provider allowlist; and
 - unsupported document routing happens after OCR rather than preventing new utility suppliers from entering the pipeline.
 
-The current quality evidence is weak. The latest stored 54-record OCR report marked every file for manual review and recorded warnings for every file. Its mean rule-based quality proxy was 3.48% for electricity, 57.11% for natural gas, 47.30% for telecom and 60.12% for water. The score is based on text length and invoice-pattern presence; it is not character error rate, word error rate, or calibrated confidence. The active pipeline also does not automatically compare baseline and enhanced OCR results, despite helper code that suggests such a comparison.
+The earlier 54-record OCR report marked every file for manual review and recorded warnings for every file. The regression repair now runs a bounded enhanced Tesseract pass for weak image OCR and compares baseline and enhanced invoice signals before selecting text. All 30 image invoices were refreshed without OCR execution errors. The score is still based on text length and invoice-pattern presence; it is not character error rate, word error rate, or calibrated confidence.
 
-The largest immediate defect is electricity: only 10.53% of required fields were populated on average. This category needs source-level diagnosis before the project can claim general utility-invoice accuracy.
+Electricity improved from 10.53% to 52.63% required-field completion through image upscaling, contrast/sharpening, page-segmentation control and Portuguese named-date/layout parsing. It remains the weakest category and still needs human-labeled correctness evaluation.
 
 ## Knowledge base and local server: 5.5/10
 
@@ -56,7 +56,7 @@ The provider-memory data model covers the assessment's requested knowledge types
 
 The current vector representation is deterministic hashed token retrieval. FAISS, LlamaIndex and Torch are genuinely used, but calling it semantic embedding search overstates its capability because no semantic embedding model is present. The persisted JSON memory and CSV review store also do not satisfy the assessment's explicit SQL/NoSQL persistence requirement. Writes are not transactional, concurrent updates are not protected, and vector index freshness is not tied to memory updates.
 
-The Gradio server provides upload, built-in OCR, Plan A/Plan B results, agent trace, human verdict, provider-memory inspection and index rebuilding. Plan B Gemini extraction is opt-in. The independent LLM judge is also opt-in and is advisory. The FastAPI service currently exposes health and root routes only; it is not yet a functional OCR or knowledge-base API.
+The Gradio server provides upload, built-in OCR, Plan A/Plan B results, a separate four-case comparison, agent trace, human verdict, provider-memory inspection and index rebuilding. Plan B Gemini extraction is opt-in through a request-only password field. The independent LLM judge is also opt-in and advisory. The FastAPI service currently exposes health and root routes only; it is not yet a functional OCR or knowledge-base API.
 
 ## Presentation faithfulness: 6.5/10
 
@@ -64,7 +64,7 @@ The presentation is reasonably candid about unmeasured gains, missing SQL/NoSQL 
 
 - “semantic vector search” should be described as deterministic token-hash retrieval unless a real semantic embedding model is added;
 - any claim that feedback improves later local Gradio extraction needs qualification, because the effect currently depends on the optional LLM path and a manually refreshed vector index;
-- the test count is now 73, not 67;
+- the test count is now 79, not 67;
 - real invoice field accuracy remains unmeasured even though synthetic OCR smoke tests and the 55-file completeness diagnostic have run; and
 - draft PR/GitOps references should be removed because this private college project does not use that delivery process.
 

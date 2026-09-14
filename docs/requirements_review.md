@@ -41,13 +41,13 @@ Recommended implementation order: trustworthy approval history and shared valida
 - Historical `unknown` memory may contain multiple companies, and old rows may have incorrectly inferred EDP. It is not automatically redistributed because seller identity cannot be safely reconstructed without reviewing the source. Correct seller fields, approve the relevant invoices again, and rebuild the vector index.
 - Existing OCR artifacts retain their original diagnostics. New OCR reports no longer include `provider_keyword_count` or `signals.provider_keywords`; external consumers must not require those fields.
 - Generic deterministic extraction recognizes labeled sellers and likely company headers. Unreadable or unusual layouts can still leave fields null; use manual review or the Gemini PDF pass. Do not interpret these changes as universal extraction accuracy.
-- Real invoice PDFs, live Gemini calls, model downloads, Docker, and AWS were not exercised. No private invoice data was needed for the regression tests. The Gradio interface disables external LLM calls.
+- The 55 local preprocessed inputs and all 30 source images were exercised during the regression repair. Live Gemini calls, model downloads, Docker, and AWS were not exercised. The Gradio interface requires an explicit action before each external LLM call.
 
 ## Verification and commands
 
-The initial suite had 41 passing tests and two failures: Windows basename handling on Linux, and a test assuming two immediately written files always have different timestamps. Both are addressed. After the current changes, `python3 -m pytest -q` completed with **73 passed**. The local pytest asyncio plugin emitted a configuration deprecation warning.
+The initial suite had 41 passing tests and two failures: Windows basename handling on Linux, and a test assuming two immediately written files always have different timestamps. Both are addressed. After the current changes, `python3 -m pytest -q` completed with **79 passed**. The local pytest asyncio plugin emitted a configuration deprecation warning.
 
-The deterministic extraction CLI and provider-memory `init` CLI also passed using one synthetic EEM bill and temporary output paths. A local FAISS/LlamaIndex index build and provider-scoped EPAL retrieval passed with the Torch feature-hash embedding. The Gradio app responded on `127.0.0.1:7860`, and its synthetic A/B callback produced all five agent events without an external LLM call. Existing private invoice files and runtime memory were not regenerated.
+The deterministic extraction CLI and provider-memory `init` CLI also passed using one synthetic EEM bill and temporary output paths. A local FAISS/LlamaIndex index build and provider-scoped EPAL retrieval passed with the Torch feature-hash embedding. The Gradio application builds successfully, and its synthetic A/B callback produces all five agent events without an external LLM call. The enhanced OCR pass regenerated derived artifacts for the 30 local source images; raw invoices were not changed.
 
 From the project folder containing `AGENTS.md`, run in PowerShell:
 

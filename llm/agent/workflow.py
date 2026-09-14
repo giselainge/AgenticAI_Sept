@@ -67,6 +67,8 @@ class AgenticABResult(BaseModel):
     comparison: dict[str, Any]
     plan_b_trace: list[AgentEvent]
     artifact_path: str | None = None
+    preprocessing: dict[str, Any] | None = None
+    audit_log: list[dict[str, Any]] = Field(default_factory=list)
     llm_judge: LlmJudgeResult | None = None
     evaluation: dict[str, Any] | None = None
 
@@ -476,6 +478,7 @@ def judge_ab_artifact(
     base_url: str = "",
     api_key: str = "",
     model: str = "",
+    provider: str = "openai_compatible",
     judge_runner: JudgeCaller | None = None,
 ) -> AgenticABResult:
     """Attach an advisory LLM-judge result without changing the human verdict."""
@@ -492,6 +495,7 @@ def judge_ab_artifact(
         base_url=base_url,
         api_key=api_key,
         model=model,
+        provider=provider,
         caller=judge_runner,
     )
     path.write_text(json.dumps(result.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")

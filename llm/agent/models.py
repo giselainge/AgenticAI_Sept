@@ -149,6 +149,7 @@ class LlmJudgeResult(BaseModel):
     """Auditable recommendation from an LLM judge; it never replaces human review."""
 
     status: Literal["completed", "unavailable", "failed"]
+    provider: Literal["gemini", "openai_compatible"] | None = None
     model: str | None = None
     evidence_scope: Literal["ocr_text"] = "ocr_text"
     preferred_plan: Literal["plan_a", "plan_b", "tie", "inconclusive"] = "inconclusive"
@@ -157,6 +158,43 @@ class LlmJudgeResult(BaseModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     summary: str = ""
     field_decisions: list[JudgeFieldDecision] = Field(default_factory=list)
+    human_verdict_required: bool = True
+    judged_at: str | None = None
+    errors: list[str] = Field(default_factory=list)
+
+
+class FourCaseFieldDecision(BaseModel):
+    field: str
+    winner: Literal[
+        "ocr_rules",
+        "ocr_llm",
+        "ocr_agentic",
+        "ocr_llm_agentic",
+        "tie",
+        "unverifiable",
+    ]
+    reason: str
+
+
+class FourCaseJudgeResult(BaseModel):
+    """Advisory ranking of the four extraction configurations."""
+
+    status: Literal["completed", "unavailable", "failed"]
+    provider: Literal["gemini", "openai_compatible"] | None = None
+    model: str | None = None
+    evidence_scope: Literal["ocr_text"] = "ocr_text"
+    best_case: Literal[
+        "ocr_rules",
+        "ocr_llm",
+        "ocr_agentic",
+        "ocr_llm_agentic",
+        "tie",
+        "inconclusive",
+    ] = "inconclusive"
+    scores: dict[str, float] = Field(default_factory=dict)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    summary: str = ""
+    field_decisions: list[FourCaseFieldDecision] = Field(default_factory=list)
     human_verdict_required: bool = True
     judged_at: str | None = None
     errors: list[str] = Field(default_factory=list)

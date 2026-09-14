@@ -70,6 +70,17 @@ The connector accepts an OpenAI-compatible `/v1/chat/completions` endpoint. Conf
 
 ## Local Gradio test interface
 
-Run `uv run python scripts\gradio_app.py` and open `http://127.0.0.1:7860`. The interface accepts an invoice PDF or image, runs the built-in OCR pipeline, shows both plan results and the five-agent trace, exposes the provider knowledge base and local FAISS rebuild action, and records the human accuracy verdict in the A/B artifact. Plan B Gemini extraction is disabled by default and requires an explicit checkbox plus a request-only API key. The judge makes a separate external call only after the user configures an endpoint and clicks **Run LLM judge**. The server rejects non-loopback host arguments.
+Run `uv run python scripts\gradio_app.py` and open `http://127.0.0.1:7860`. The interface accepts an invoice PDF or image, runs the built-in OCR pipeline, shows retrieval percentages and all 19 required fields side by side, exposes OCR/post-processing diagnostics and a sanitized stage log, shows the five-agent trace, exposes the provider knowledge base and local FAISS rebuild action, and records the human accuracy verdict in the A/B artifact. Plan B Gemini extraction is disabled by default and requires an explicit checkbox plus a request-only API key. The judge makes a separate external call only after the user configures an endpoint and clicks **Run LLM judge**; its field decisions are added to the comparison table. The server rejects non-loopback host arguments.
+
+The **Four-case assessment** tab keeps these configurations distinct:
+
+| Case | Extraction | Agent workflow | Provider RAG |
+| --- | --- | --- | --- |
+| `ocr_rules` | Deterministic fields from OCR | No | No |
+| `ocr_llm` | Gemini PDF/OCR extraction | No | No |
+| `ocr_agentic` | Deterministic fields from OCR | Five-agent Plan B | Yes, retrieved but not consumed by the rules extractor |
+| `ocr_llm_agentic` | Gemini PDF/OCR extraction | Five-agent Plan B | Yes, supplied to Gemini |
+
+With the Gemini key blank, the local cases run and the two model cases are explicitly unavailable. Pasting a key and clicking **Run four cases** makes two Gemini extraction calls. The independent four-case judge ranks available candidates, while a separate human verdict records the verified result. API keys are never written to the artifact.
 
 The assessment defines electricity, water, natural gas, and telecom as supported invoice categories. The classification and review-routing agents reject documents outside those four categories.

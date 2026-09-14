@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -20,12 +21,32 @@ from invoice_parser.paths import (
     DEFAULT_RAW_DIR,
     DEFAULT_VECTOR_STORE_DIR,
 )
-from llm.agent.workflow import judge_ab_artifact, record_ab_verdict, run_agentic_ab_test
+from llm.agent.four_case import (
+    FourCaseEvaluation,
+    judge_four_case_artifact,
+    record_four_case_verdict,
+    run_four_case_evaluation,
+)
+from llm.agent.workflow import AgenticABResult, judge_ab_artifact, record_ab_verdict, run_agentic_ab_test
 from rag.adaptive_rag import DEFAULT_KB, load_kb
 from scripts.ocr_text_extraction import SUPPORTED_EXTENSIONS, process_file
 
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+FIELD_GROUPS = {
+    "Invoice": ["invoice_type", "invoice_number", "invoice_date", "currency", "payment_due_date"],
+    "Provider": ["provider_name", "provider_vat_number", "provider_address"],
+    "Buyer": ["buyer_name", "buyer_vat_number", "buyer_address"],
+    "Service": [
+        "service_plan_name",
+        "consumption_start_date",
+        "consumption_end_date",
+        "units_of_consumption",
+        "unit_type",
+    ],
+    "Financial": ["subtotal_value", "total_vat", "total_value"],
+}
+REQUIRED_FIELDS = [field for fields in FIELD_GROUPS.values() for field in fields]
 
 
 def _safe_stem(filename: str) -> str:
@@ -49,7 +70,7 @@ def _copy_local(source: Path, destination_dir: Path) -> Path:
     return destination
 
 
-def _prepare_inputs(uploaded_file: Any) -> tuple[Path, Path | None, str]:
+def _prepare_inputs(uploaded_file: Any) -> tuple[Path, Path | None, str, Any]:
     source = _uploaded_path(uploaded_file)
     if source is None:
         raise ValueError("Upload an invoice PDF or image.")
@@ -68,7 +89,187 @@ def _prepare_inputs(uploaded_file: Any) -> tuple[Path, Path | None, str]:
         Path(ocr_result.selected_text_file),
         Path(ocr_result.searchable_pdf) if ocr_result.searchable_pdf else None,
         source.name,
+        ocr_result,
     )
+
+
+def _present(value: Any) -> bool:
+    return str(value or "").strip().lower() not in {"", "null", "none", "nan"}
+
+
+def _pass_summary(ocr_pass: Any) -> dict[str, Any]:
+    quality = getattr(ocr_pass, "quality", None) or {}
+    return {
+        "used": bool(getattr(ocr_pass, "used", False)),
+        "method": getattr(ocr_pass, "method", None),
+        "quality_score_percent": round(float(quality.get("score", 0.0)) * 100, 2),
+        "warnings": list(getattr(ocr_pass, "warnings", []) or []),
+        "errors": list(getattr(ocr_pass, "errors", []) or []),
+    }
+
+
+def _ocr_diagnostics(ocr_result: Any) -> dict[str, Any]:
+    return {
+        "file_type": getattr(ocr_result, "file_type", None),
+        "extraction_method": getattr(ocr_result, "extraction_method", None),
+        "quality_score_percent": round(float(getattr(ocr_result, "quality_score", 0.0) or 0.0) * 100, 2),
+        "requires_ocr": bool(getattr(ocr_result, "requires_ocr", False)),
+        "requires_manual_review": bool(getattr(ocr_result, "requires_manual_review", True)),
+        "baseline": _pass_summary(getattr(ocr_result, "baseline", None)),
+        "enhanced": _pass_summary(getattr(ocr_result, "enhanced", None)),
+        "warnings": list(getattr(ocr_result, "warnings", []) or []),
+        "errors": list(getattr(ocr_result, "errors", []) or []),
+        "selected_text_file": getattr(ocr_result, "selected_text_file", None),
+        "searchable_pdf": getattr(ocr_result, "searchable_pdf", None),
+    }
+
+
+def _judge_winners(result: AgenticABResult) -> dict[str, str]:
+    if result.llm_judge is None:
+        return {}
+    return {item.field: item.winner for item in result.llm_judge.field_decisions}
+
+
+def field_comparison_rows(result: AgenticABResult) -> list[list[Any]]:
+    winners = _judge_winners(result)
+    rows: list[list[Any]] = []
+    for group, fields in FIELD_GROUPS.items():
+        for field_name in fields:
+            plan_a_value = result.plan_a.row.get(field_name, "null")
+            plan_b_value = result.plan_b.row.get(field_name, "null")
+            rows.append(
+                [
+                    group,
+                    field_name,
+                    plan_a_value,
+                    plan_b_value,
+                    "yes" if _present(plan_a_value) else "no",
+                    "yes" if _present(plan_b_value) else "no",
+                    "yes" if str(plan_a_value) == str(plan_b_value) else "no",
+                    winners.get(field_name, "not judged"),
+                ]
+            )
+    return rows
+
+
+def _run_summary(result: AgenticABResult) -> dict[str, Any]:
+    plan_a_retrieved = sum(_present(result.plan_a.row.get(field)) for field in REQUIRED_FIELDS)
+    plan_b_retrieved = sum(_present(result.plan_b.row.get(field)) for field in REQUIRED_FIELDS)
+    return {
+        "required_fields": len(REQUIRED_FIELDS),
+        "plan_a_fields_retrieved": plan_a_retrieved,
+        "plan_a_fields_retrieved_percent": round(plan_a_retrieved / len(REQUIRED_FIELDS) * 100, 2),
+        "plan_b_fields_retrieved": plan_b_retrieved,
+        "plan_b_fields_retrieved_percent": round(plan_b_retrieved / len(REQUIRED_FIELDS) * 100, 2),
+        "changed_fields": result.comparison.get("changed_field_count", 0),
+        "plan_a_validation_errors": len(result.plan_a.validation_errors),
+        "plan_b_validation_errors": len(result.plan_b.validation_errors),
+        "plan_a_route": result.plan_a.route,
+        "plan_b_route": result.plan_b.route,
+        "plan_b_llm_used": result.plan_b.llm_used,
+        "accuracy_status": "requires a human verdict or labeled ground truth",
+    }
+
+
+def _postprocess_summary(result: AgenticABResult) -> dict[str, Any]:
+    memory_event = next((event for event in result.plan_b_trace if event.agent == "provider_memory_agent"), None)
+    route_event = next((event for event in result.plan_b_trace if event.agent == "review_routing_agent"), None)
+    return {
+        "classification": result.plan_b.row.get("invoice_type", "unsupported"),
+        "plan_a_validation_errors": result.plan_a.validation_errors,
+        "plan_b_validation_errors": result.plan_b.validation_errors,
+        "plan_a_route": result.plan_a.route,
+        "plan_b_route": result.plan_b.route,
+        "provider_memory": memory_event.metrics if memory_event else {},
+        "review_policy": route_event.metrics if route_event else {},
+        "comparison": result.comparison,
+    }
+
+
+def _audit_rows(result: AgenticABResult, ocr: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = [
+        {
+            "stage": "ocr_preprocessing",
+            "status": "completed" if not ocr.get("errors") else "failed",
+            "decision": str(ocr.get("extraction_method") or "unknown"),
+            "duration_ms": None,
+            "details": {
+                "quality_score_percent": ocr.get("quality_score_percent"),
+                "requires_manual_review": ocr.get("requires_manual_review"),
+            },
+        },
+        {
+            "stage": "plan_a_extraction",
+            "status": "completed",
+            "decision": result.plan_a.route,
+            "duration_ms": None,
+            "details": {"fields_retrieved_percent": round(result.plan_a.completion * 100, 2)},
+        },
+    ]
+    rows.extend(
+        {
+            "stage": event.agent,
+            "status": event.status,
+            "decision": event.decision,
+            "duration_ms": event.duration_ms,
+            "details": event.metrics,
+        }
+        for event in result.plan_b_trace
+    )
+    rows.append(
+        {
+            "stage": "ab_comparison",
+            "status": "completed",
+            "decision": "human_verdict_required",
+            "duration_ms": None,
+            "details": {
+                "changed_field_count": result.comparison.get("changed_field_count", 0),
+                "validation_error_delta": result.comparison.get("validation_error_delta", 0),
+            },
+        }
+    )
+    return rows
+
+
+def _audit_table(rows: list[dict[str, Any]]) -> list[list[Any]]:
+    return [
+        [
+            row.get("stage"),
+            row.get("status"),
+            row.get("decision"),
+            row.get("duration_ms"),
+            json.dumps(row.get("details", {}), ensure_ascii=False),
+        ]
+        for row in rows
+    ]
+
+
+def _execute_local_ab(
+    uploaded_file: Any,
+    enable_plan_b_llm: bool,
+    plan_b_model: str,
+    plan_b_api_key: str,
+) -> tuple[AgenticABResult, str, dict[str, Any]]:
+    text_path, pdf_path, source_label, ocr_result = _prepare_inputs(uploaded_file)
+    selected_key = (plan_b_api_key or os.getenv("GEMINI_API_KEY", "")) if enable_plan_b_llm else ""
+    selected_model = (plan_b_model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")).strip()
+    result = run_agentic_ab_test(
+        text_path,
+        pdf_file=pdf_path,
+        kb_path=DEFAULT_KB,
+        output_dir=DEFAULT_AGENTIC_AB_DIR,
+        api_key=selected_key,
+        model=selected_model,
+    )
+    ocr = _ocr_diagnostics(ocr_result)
+    result.preprocessing = ocr
+    result.audit_log = _audit_rows(result, ocr)
+    if result.artifact_path:
+        Path(result.artifact_path).write_text(
+            json.dumps(result.model_dump(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    return result, source_label, ocr
 
 
 def run_local_ab(
@@ -79,16 +280,8 @@ def run_local_ab(
 ) -> tuple[Any, ...]:
     """Run both plans; Plan B model use requires an explicit UI opt-in."""
     try:
-        text_path, pdf_path, source_label = _prepare_inputs(uploaded_file)
-        selected_key = (plan_b_api_key or os.getenv("GEMINI_API_KEY", "")) if enable_plan_b_llm else ""
-        selected_model = (plan_b_model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")).strip()
-        result = run_agentic_ab_test(
-            text_path,
-            pdf_file=pdf_path,
-            kb_path=DEFAULT_KB,
-            output_dir=DEFAULT_AGENTIC_AB_DIR,
-            api_key=selected_key,
-            model=selected_model,
+        result, source_label, _ = _execute_local_ab(
+            uploaded_file, enable_plan_b_llm, plan_b_model, plan_b_api_key
         )
     except Exception as exc:
         status = f"Local A/B test failed: {exc}"
@@ -105,6 +298,38 @@ def run_local_ab(
     return status, plan_a, plan_b, result.comparison, trace, result.artifact_path or "", result.artifact_path or ""
 
 
+def run_local_inspection(
+    uploaded_file: Any,
+    enable_plan_b_llm: bool = False,
+    plan_b_model: str = "",
+    plan_b_api_key: str = "",
+) -> tuple[Any, ...]:
+    """Populate the field, OCR, post-processing and audit inspection views."""
+    try:
+        result, source_label, ocr = _execute_local_ab(
+            uploaded_file, enable_plan_b_llm, plan_b_model, plan_b_api_key
+        )
+    except Exception as exc:
+        return f"Local A/B test failed: {exc}", {}, [], {}, {}, {}, [], {}, [], "", ""
+    status = (
+        f"Completed locally for {source_label}. Plan A route: {result.plan_a.route}; "
+        f"Plan B route: {result.plan_b.route}; Plan B LLM used: {str(result.plan_b.llm_used).lower()}."
+    )
+    return (
+        status,
+        _run_summary(result),
+        field_comparison_rows(result),
+        result.plan_a.model_dump(),
+        result.plan_b.model_dump(),
+        result.comparison,
+        [event.model_dump() for event in result.plan_b_trace],
+        {"ocr": ocr, "post_processing": _postprocess_summary(result)},
+        _audit_table(result.audit_log),
+        result.artifact_path or "",
+        result.artifact_path or "",
+    )
+
+
 def save_verdict(artifact_path: str, preferred_plan: str, note: str) -> str:
     if not artifact_path:
         return "Run an A/B test before saving a verdict."
@@ -115,19 +340,35 @@ def save_verdict(artifact_path: str, preferred_plan: str, note: str) -> str:
     return f"Saved verdict '{result.evaluation['preferred_plan']}' in {artifact_path}."
 
 
-def run_judge(artifact_path: str, base_url: str, model: str, api_key: str) -> tuple[str, dict[str, Any]]:
+def run_judge(
+    artifact_path: str,
+    base_url: str,
+    model: str,
+    api_key: str,
+    provider: str = "openai_compatible",
+    extraction_api_key: str = "",
+) -> tuple[str, dict[str, Any]]:
     """Run the optional judge only after an explicit local UI action."""
     if not artifact_path:
         return "Run an A/B test before invoking the judge.", {}
+    selected_provider = "gemini" if provider == "gemini" else "openai_compatible"
     selected_url = (base_url or os.getenv("JUDGE_BASE_URL", "")).strip()
-    selected_model = (model or os.getenv("JUDGE_MODEL", "")).strip()
-    selected_key = api_key or os.getenv("JUDGE_API_KEY", "")
+    selected_model = (
+        model
+        or os.getenv("JUDGE_MODEL", "")
+        or (os.getenv("GEMINI_MODEL", "gemini-3.5-flash") if selected_provider == "gemini" else "")
+    ).strip()
+    if selected_provider == "gemini":
+        selected_key = api_key or extraction_api_key or os.getenv("JUDGE_API_KEY", "")
+    else:
+        selected_key = api_key or os.getenv("JUDGE_API_KEY", "")
     try:
         result = judge_ab_artifact(
             artifact_path,
             base_url=selected_url,
             api_key=selected_key,
             model=selected_model,
+            provider=selected_provider,
         )
     except Exception as exc:
         return f"LLM judge could not run: {exc}", {}
@@ -137,10 +378,125 @@ def run_judge(artifact_path: str, base_url: str, model: str, api_key: str) -> tu
     if judge.status != "completed":
         return f"LLM judge status: {judge.status}. {judge.summary}", judge.model_dump()
     return (
-        f"LLM judge recommends {judge.preferred_plan} with confidence {judge.confidence}. "
+        f"{selected_provider} judge recommends {judge.preferred_plan} with confidence {judge.confidence}. "
         "A human verdict is still required.",
         judge.model_dump(),
     )
+
+
+def run_judge_inspection(
+    artifact_path: str,
+    base_url: str,
+    model: str,
+    api_key: str,
+    provider: str = "openai_compatible",
+    extraction_api_key: str = "",
+) -> tuple[str, dict[str, Any], list[list[Any]]]:
+    status, judge = run_judge(
+        artifact_path,
+        base_url,
+        model,
+        api_key,
+        provider,
+        extraction_api_key,
+    )
+    rows: list[list[Any]] = []
+    path = Path(artifact_path) if artifact_path else None
+    if path and path.exists():
+        try:
+            result = AgenticABResult.model_validate_json(path.read_text(encoding="utf-8"))
+            rows = field_comparison_rows(result)
+        except Exception:
+            rows = []
+    return status, judge, rows
+
+
+def _four_case_table(result: FourCaseEvaluation) -> list[list[Any]]:
+    return [
+        [
+            case.case_id,
+            case.label,
+            case.status,
+            case.fields_retrieved_percent,
+            len(case.validation_errors),
+            case.route,
+            "yes" if case.llm_used else "no",
+        ]
+        for case in result.cases.values()
+    ]
+
+
+def run_four_cases(uploaded_file: Any, gemini_model: str, gemini_api_key: str) -> tuple[Any, ...]:
+    """Run all available cases; missing model configuration remains explicit."""
+    try:
+        text_path, pdf_path, source_label, _ = _prepare_inputs(uploaded_file)
+        result = run_four_case_evaluation(
+            text_path,
+            pdf_file=pdf_path,
+            kb_path=DEFAULT_KB,
+            output_dir=DEFAULT_AGENTIC_AB_DIR / "four_case",
+            gemini_api_key=gemini_api_key,
+            gemini_model=(gemini_model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")).strip(),
+        )
+    except Exception as exc:
+        return f"Four-case assessment failed: {exc}", [], {}, "", ""
+    measured = sum(case.status == "measured" for case in result.cases.values())
+    status = (
+        f"Four-case artifact created locally for {source_label}. Measured cases: {measured}/4. "
+        "Accuracy still requires the judge plus a human verdict."
+    )
+    return status, _four_case_table(result), result.model_dump(), result.artifact_path or "", result.artifact_path or ""
+
+
+def run_four_case_judge_ui(
+    artifact_path: str,
+    base_url: str,
+    model: str,
+    api_key: str,
+    provider: str = "openai_compatible",
+    extraction_api_key: str = "",
+) -> tuple[str, dict[str, Any]]:
+    if not artifact_path:
+        return "Run the four cases before invoking the judge.", {}
+    try:
+        selected_provider = "gemini" if provider == "gemini" else "openai_compatible"
+        selected_model = (
+            model
+            or os.getenv("JUDGE_MODEL", "")
+            or (os.getenv("GEMINI_MODEL", "gemini-3.5-flash") if selected_provider == "gemini" else "")
+        ).strip()
+        if selected_provider == "gemini":
+            selected_key = api_key or extraction_api_key or os.getenv("JUDGE_API_KEY", "")
+        else:
+            selected_key = api_key or os.getenv("JUDGE_API_KEY", "")
+        result = judge_four_case_artifact(
+            artifact_path,
+            base_url=(base_url or os.getenv("JUDGE_BASE_URL", "")).strip(),
+            api_key=selected_key,
+            model=selected_model,
+            provider=selected_provider,
+        )
+    except Exception as exc:
+        return f"Four-case judge could not run: {exc}", {}
+    judge = result.judge
+    if judge is None:
+        return "Four-case judge produced no result.", {}
+    return (
+        f"Judge status: {judge.status}; best case: {judge.best_case}; confidence: {judge.confidence}. "
+        "Human verification is still required.",
+        judge.model_dump(),
+    )
+
+
+def save_four_case_verdict(artifact_path: str, best_case: str, note: str) -> str:
+    if not artifact_path:
+        return "Run the four cases before saving a human verdict."
+    try:
+        result = record_four_case_verdict(artifact_path, best_case, note)
+    except Exception as exc:
+        return f"Could not save the four-case verdict: {exc}"
+    assert result.human_evaluation is not None
+    return f"Saved human four-case verdict '{result.human_evaluation['best_case']}' locally."
 
 
 def knowledge_base_view() -> tuple[list[list[Any]], dict[str, Any]]:
@@ -202,18 +558,55 @@ def build_demo() -> Any:
                 plan_b_api_key = gr.Textbox(label="Gemini API key", type="password")
             run_button = gr.Button("Run local A/B test", variant="primary")
             status = gr.Markdown()
-            with gr.Row():
-                plan_a = gr.JSON(label="Plan A")
-                plan_b = gr.JSON(label="Plan B")
-            comparison = gr.JSON(label="Comparison")
-            trace = gr.JSON(label="Plan B agent trace")
+            run_summary = gr.JSON(label="Field retrieval and routing summary")
+            field_table = gr.Dataframe(
+                headers=[
+                    "Group",
+                    "Field",
+                    "Plan A value",
+                    "Plan B value",
+                    "A retrieved",
+                    "B retrieved",
+                    "Same value",
+                    "Judge decision",
+                ],
+                datatype=["str"] * 8,
+                interactive=False,
+                label="Required-field inspection",
+            )
+            with gr.Accordion("Raw plan outputs", open=False):
+                with gr.Row():
+                    plan_a = gr.JSON(label="Plan A")
+                    plan_b = gr.JSON(label="Plan B")
+                comparison = gr.JSON(label="Comparison")
+            with gr.Accordion("OCR, post-processing and extraction log", open=False):
+                processing_details = gr.JSON(label="OCR and post-processing details")
+                trace = gr.JSON(label="Plan B agent trace")
+                audit_log = gr.Dataframe(
+                    headers=["Stage", "Status", "Decision", "Duration ms", "Details"],
+                    datatype=["str", "str", "str", "number", "str"],
+                    interactive=False,
+                    label="Local extraction audit log",
+                )
             artifact = gr.Textbox(label="Local result artifact", interactive=False)
             artifact_state = gr.State("")
 
             run_button.click(
-                run_local_ab,
+                run_local_inspection,
                 inputs=[invoice, enable_plan_b_llm, plan_b_model, plan_b_api_key],
-                outputs=[status, plan_a, plan_b, comparison, trace, artifact, artifact_state],
+                outputs=[
+                    status,
+                    run_summary,
+                    field_table,
+                    plan_a,
+                    plan_b,
+                    comparison,
+                    trace,
+                    processing_details,
+                    audit_log,
+                    artifact,
+                    artifact_state,
+                ],
             )
 
             gr.Markdown("### Human accuracy verdict")
@@ -235,27 +628,161 @@ def build_demo() -> Any:
                 gr.Markdown(
                     "The judge compares both outputs only with OCR evidence. The invoice text is sent to the "
                     "configured endpoint only when you click **Run LLM judge**. Its recommendation does not "
-                    "replace the human verdict."
+                    "replace the human verdict. Select Gemini to reuse the Plan B key; leave the judge-key "
+                    "field blank in that case."
+                )
+                judge_provider = gr.Dropdown(
+                    choices=[
+                        ("Gemini (same key allowed)", "gemini"),
+                        ("OpenAI-compatible / Qwen", "openai_compatible"),
+                    ],
+                    value=os.getenv("JUDGE_PROVIDER", "gemini"),
+                    label="Judge provider",
                 )
                 judge_base_url = gr.Textbox(
                     value=os.getenv("JUDGE_BASE_URL", ""),
-                    label="OpenAI-compatible base URL",
+                    label="OpenAI-compatible base URL (ignored for Gemini)",
                     placeholder="http://127.0.0.1:8000/v1",
                 )
                 judge_model = gr.Textbox(
-                    value=os.getenv("JUDGE_MODEL", ""),
+                    value=os.getenv("JUDGE_MODEL", "") or os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
                     label="Judge model",
-                    placeholder="your-served-model-name",
+                    placeholder="Gemini model or served model name",
                 )
-                judge_api_key = gr.Textbox(label="Judge API key (if required)", type="password")
+                judge_api_key = gr.Textbox(
+                    label="Judge API key (blank reuses Plan B Gemini key)",
+                    type="password",
+                )
                 judge_button = gr.Button("Run LLM judge")
                 judge_status = gr.Markdown()
                 judge_result = gr.JSON(label="Advisory judge result")
                 judge_button.click(
-                    run_judge,
-                    inputs=[artifact_state, judge_base_url, judge_model, judge_api_key],
-                    outputs=[judge_status, judge_result],
+                    run_judge_inspection,
+                    inputs=[
+                        artifact_state,
+                        judge_base_url,
+                        judge_model,
+                        judge_api_key,
+                        judge_provider,
+                        plan_b_api_key,
+                    ],
+                    outputs=[judge_status, judge_result, field_table],
                 )
+
+        with gr.Tab("Four-case assessment"):
+            gr.Markdown(
+                "Compare the four requested configurations on one invoice. With the Gemini key blank, "
+                "the two local cases run and the two LLM cases are marked unavailable. Pasting a key and "
+                "clicking **Run four cases** makes two Gemini extraction calls: one without provider RAG "
+                "and one inside the agentic workflow. The password field is request-only and is not saved."
+            )
+            four_case_invoice = gr.File(
+                label="Invoice PDF or image",
+                file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"],
+                type="filepath",
+            )
+            four_case_model = gr.Textbox(
+                value=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+                label="Gemini model",
+            )
+            four_case_key = gr.Textbox(label="Gemini API key", type="password")
+            four_case_button = gr.Button("Run four cases", variant="primary")
+            four_case_status = gr.Markdown()
+            four_case_table = gr.Dataframe(
+                headers=[
+                    "Case",
+                    "Configuration",
+                    "Status",
+                    "Fields retrieved %",
+                    "Validation errors",
+                    "Route",
+                    "LLM used",
+                ],
+                datatype=["str", "str", "str", "number", "number", "str", "str"],
+                interactive=False,
+                label="Four-case comparison",
+            )
+            with gr.Accordion("Candidate outputs", open=False):
+                four_case_result = gr.JSON(label="Four-case artifact contents")
+                four_case_artifact = gr.Textbox(label="Local result artifact", interactive=False)
+            four_case_artifact_state = gr.State("")
+            four_case_button.click(
+                run_four_cases,
+                inputs=[four_case_invoice, four_case_model, four_case_key],
+                outputs=[
+                    four_case_status,
+                    four_case_table,
+                    four_case_result,
+                    four_case_artifact,
+                    four_case_artifact_state,
+                ],
+            )
+
+            with gr.Accordion("Optional independent four-case judge", open=False):
+                gr.Markdown(
+                    "The judge uses the OCR evidence to rank only the available candidates. It is advisory; "
+                    "save a separate human verdict after checking the source invoice. Select Gemini to reuse "
+                    "the extraction key already pasted above."
+                )
+                four_judge_provider = gr.Dropdown(
+                    choices=[
+                        ("Gemini (same key allowed)", "gemini"),
+                        ("OpenAI-compatible / Qwen", "openai_compatible"),
+                    ],
+                    value=os.getenv("JUDGE_PROVIDER", "gemini"),
+                    label="Judge provider",
+                )
+                four_judge_base_url = gr.Textbox(
+                    value=os.getenv("JUDGE_BASE_URL", ""),
+                    label="OpenAI-compatible base URL (ignored for Gemini)",
+                    placeholder="http://127.0.0.1:8000/v1",
+                )
+                four_judge_model = gr.Textbox(
+                    value=os.getenv("JUDGE_MODEL", "") or os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+                    label="Judge model",
+                    placeholder="Gemini model or served model name",
+                )
+                four_judge_key = gr.Textbox(
+                    label="Judge API key (blank reuses Gemini extraction key)",
+                    type="password",
+                )
+                four_judge_button = gr.Button("Run four-case LLM judge")
+                four_judge_status = gr.Markdown()
+                four_judge_result = gr.JSON(label="Advisory judge result")
+                four_judge_button.click(
+                    run_four_case_judge_ui,
+                    inputs=[
+                        four_case_artifact_state,
+                        four_judge_base_url,
+                        four_judge_model,
+                        four_judge_key,
+                        four_judge_provider,
+                        four_case_key,
+                    ],
+                    outputs=[four_judge_status, four_judge_result],
+                )
+
+            gr.Markdown("### Human four-case verdict")
+            four_verdict = gr.Dropdown(
+                choices=[
+                    "ocr_rules",
+                    "ocr_llm",
+                    "ocr_agentic",
+                    "ocr_llm_agentic",
+                    "tie",
+                    "inconclusive",
+                ],
+                value="inconclusive",
+                label="Best verified configuration",
+            )
+            four_verdict_note = gr.Textbox(label="Reviewer note")
+            four_verdict_button = gr.Button("Save four-case verdict locally")
+            four_verdict_status = gr.Markdown()
+            four_verdict_button.click(
+                save_four_case_verdict,
+                inputs=[four_case_artifact_state, four_verdict, four_verdict_note],
+                outputs=four_verdict_status,
+            )
 
         with gr.Tab("Provider knowledge base"):
             gr.Markdown(
