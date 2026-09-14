@@ -55,6 +55,7 @@ def test_compose_runs_api_and_dashboard_with_persistent_runtime_paths() -> None:
         assert "./runtime:/app/runtime" in service["volumes"]
         assert service["environment"]["RAG_DB_PATH"] == "/app/runtime/knowledge_base.sqlite3"
         assert "TORCH_EMBEDDING_DEVICE" not in service["environment"]
+        assert service["user"] == "${LOCAL_CONTAINER_UID:-1000}:${LOCAL_CONTAINER_GID:-1000}"
         assert "GEMINI_API_KEY" not in service["environment"]
         assert "JUDGE_API_KEY" not in service["environment"]
         assert service["environment"]["OCR_LANGUAGES"] == "${OCR_LANGUAGES:-por+eng}"
@@ -146,12 +147,13 @@ def test_uv_metadata_is_the_only_python_dependency_source() -> None:
     assert any(item.startswith("faiss-cpu") for item in metadata["project"]["dependencies"])
     assert any(item.startswith("llama-index-core") for item in metadata["project"]["dependencies"])
     assert any(item.startswith("llama-index-vector-stores-faiss") for item in metadata["project"]["dependencies"])
-    assert any(item.startswith("torch") for item in metadata["project"]["dependencies"])
+    assert all(not item.startswith("torch") for item in metadata["project"]["dependencies"])
     assert all("hugging" not in item.lower() for item in metadata["project"]["dependencies"])
     lock_text = (PROJECT_ROOT / "uv.lock").read_text(encoding="utf-8").lower()
     assert 'name = "sentence-transformers"' not in lock_text
     assert 'name = "transformers"' not in lock_text
     assert 'name = "llama-index-embeddings-huggingface"' not in lock_text
+    assert 'name = "torch"' not in lock_text
     assert "optional-dependencies" not in metadata["project"]
     assert any(item.startswith("pytest") for item in metadata["dependency-groups"]["dev"])
     assert not (PROJECT_ROOT / "requirements.txt").exists()

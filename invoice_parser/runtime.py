@@ -38,9 +38,8 @@ PACKAGE_VERSIONS = (
     "pydantic",
     "pymupdf",
     "pytesseract",
-    "torch",
 )
-IMPORTS = ("faiss", "fitz", "gradio", "llama_index.core", "PIL", "pytesseract", "torch")
+IMPORTS = ("faiss", "fitz", "gradio", "llama_index.core", "PIL", "pytesseract")
 
 
 def _command_version(command: str) -> str | None:

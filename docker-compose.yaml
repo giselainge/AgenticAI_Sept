@@ -6,6 +6,7 @@ x-billing-service: &billing-service
     context: .
     dockerfile: Dockerfile
   image: ${APP_IMAGE_TAG:-agentic-ai-billing-agent:local}
+  user: "${LOCAL_CONTAINER_UID:-1000}:${LOCAL_CONTAINER_GID:-1000}"
   restart: unless-stopped
   environment: &billing-service-environment
     GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}

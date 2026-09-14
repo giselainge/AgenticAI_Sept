@@ -13,8 +13,8 @@ def test_runtime_report_has_stable_quality_fingerprint(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(runtime, "DEFAULT_VECTOR_STORE_DIR", tmp_path / "runtime" / "vector_store")
     monkeypatch.setattr(runtime, "_command_version", lambda name: f"{name} 1.0")
     monkeypatch.setattr(runtime, "_tesseract_languages", lambda: ["eng", "por"])
-    monkeypatch.setattr(runtime, "_package_versions", lambda: {"torch": "1.0"})
-    monkeypatch.setattr(runtime, "_import_availability", lambda: {"torch": True})
+    monkeypatch.setattr(runtime, "_package_versions", lambda: {"faiss-cpu": "1.0"})
+    monkeypatch.setattr(runtime, "_import_availability", lambda: {"faiss": True})
 
     first = runtime.build_runtime_report()
     second = runtime.build_runtime_report()
