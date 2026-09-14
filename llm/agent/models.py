@@ -12,6 +12,7 @@ DEFAULT_MODEL = "gemini-3.5-flash"
 InvoiceType = Literal["electricity", "water", "natural gas", "telecom", "unsupported"]
 ReviewStatus = Literal["manual_review_required", "ready_for_review"]
 GeminiCaller = Callable[..., str]
+JudgeCaller = Callable[..., str | dict[str, Any]]
 
 
 class RagSnippet(BaseModel):
@@ -134,3 +135,28 @@ class SecondPassArtifactPaths(BaseModel):
 
     raw_response_path: Path
     normalized_output_path: Path
+
+
+class JudgeFieldDecision(BaseModel):
+    """One evidence-based comparison made by the independent A/B judge."""
+
+    field: str
+    winner: Literal["plan_a", "plan_b", "tie", "unverifiable"]
+    reason: str
+
+
+class LlmJudgeResult(BaseModel):
+    """Auditable recommendation from an LLM judge; it never replaces human review."""
+
+    status: Literal["completed", "unavailable", "failed"]
+    model: str | None = None
+    evidence_scope: Literal["ocr_text"] = "ocr_text"
+    preferred_plan: Literal["plan_a", "plan_b", "tie", "inconclusive"] = "inconclusive"
+    plan_a_score: float | None = Field(default=None, ge=0, le=10)
+    plan_b_score: float | None = Field(default=None, ge=0, le=10)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    summary: str = ""
+    field_decisions: list[JudgeFieldDecision] = Field(default_factory=list)
+    human_verdict_required: bool = True
+    judged_at: str | None = None
+    errors: list[str] = Field(default_factory=list)

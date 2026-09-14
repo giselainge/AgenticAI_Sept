@@ -64,6 +64,41 @@ def test_local_gradio_verdict_is_saved(tmp_path: Path, monkeypatch) -> None:
     assert "Better provider extraction." in Path(artifact).read_text(encoding="utf-8")
 
 
+def test_gradio_judge_callback_keeps_human_verdict_required(tmp_path: Path, monkeypatch) -> None:
+    artifact = tmp_path / "comparison.json"
+    artifact.write_text("{}", encoding="utf-8")
+    seen = {}
+
+    def fake_judge(path, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(
+            llm_judge=SimpleNamespace(
+                status="completed",
+                preferred_plan="plan_b",
+                confidence=0.75,
+                model_dump=lambda: {
+                    "status": "completed",
+                    "preferred_plan": "plan_b",
+                    "confidence": 0.75,
+                    "human_verdict_required": True,
+                },
+            )
+        )
+
+    monkeypatch.setattr(gradio_app, "judge_ab_artifact", fake_judge)
+    status, judge = gradio_app.run_judge(
+        str(artifact),
+        "http://127.0.0.1:8000/v1",
+        "independent-model",
+        "request-only-secret",
+    )
+
+    assert "recommends plan_b" in status
+    assert "human verdict is still required" in status
+    assert judge["human_verdict_required"] is True
+    assert seen["api_key"] == "request-only-secret"
+
+
 def test_gradio_host_allowlist_is_loopback_only() -> None:
     assert gradio_app.LOCAL_HOSTS == {"127.0.0.1", "localhost", "::1"}
 

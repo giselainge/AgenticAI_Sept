@@ -1,7 +1,7 @@
 ﻿# A. About this project / Invoice Parser Agent
 
 AI-assisted invoice parser for utility and telecom invoices.
-The project combines local OCR, deterministic field extraction, provider-specific RAG memory, an agentic A/B workflow, a local Gradio lab, a Gemini PDF second pass, and a review dashboard.
+The project combines local OCR, deterministic field extraction, provider-specific RAG memory, an agentic A/B workflow, an optional independent LLM judge, a local Gradio lab, a Gemini PDF second pass, and a review dashboard.
 
 This document is organized in these sections:
 A. About project
@@ -182,7 +182,17 @@ uv run python scripts\gradio_app.py
 
 Open [http://127.0.0.1:7860](http://127.0.0.1:7860). Upload an invoice PDF or image; the app runs the OCR stage automatically. The interface shows Plan A and Plan B side by side, the five Plan B agent events, comparison metrics, the local provider knowledge base, a FAISS index rebuild action, and a human verdict control.
 
-This interface always passes an empty API key to Plan B, so it cannot call Gemini. Plan B still runs classification, provider-memory retrieval, deterministic fallback extraction, validation, and review routing. Use the existing CLI or review dashboard later when an external Gemini comparison is explicitly wanted.
+Plan B Gemini extraction is disabled by default. Without it, Plan B still runs classification, provider-memory retrieval, deterministic fallback extraction, validation, and review routing. Enable **Optional Plan B Gemini extraction** and provide a request-only key to run the stronger OCR + LLM + agent comparison. The uploaded invoice, OCR evidence, and retrieved provider context are sent to Gemini only for that explicitly enabled run; the key is not written to the A/B artifact.
+
+The **Optional independent LLM judge** panel can compare both results with the OCR evidence through a user-configured OpenAI-compatible endpoint. It sends invoice text only after **Run LLM judge** is clicked and never replaces the human verdict. Configure the fields in the panel or set:
+
+```powershell
+$env:JUDGE_BASE_URL="http://127.0.0.1:8000/v1"
+$env:JUDGE_MODEL="your-served-model-name"
+$env:JUDGE_API_KEY="only-if-your-server-requires-one"
+```
+
+The project does not download a judge model. For a credible evaluation, use a judge model that differs from the model used by Plan B and report agreement with human-labeled invoices.
 
 The server rejects non-loopback host arguments and launches with Gradio sharing disabled.
 
@@ -252,7 +262,7 @@ Main views:
 - **Overview**: processing queue, status, completion, and errors.
 - **Import Invoices**: upload invoices, optionally provide Gemini API key/model, run OCR and Gemini PDF extraction.
 - **Manual Review**: inspect fields, completion %, validation errors, PDF preview, Gemini second-pass summary, and save corrections.
-- **Experimental Agentic A/B Test** (inside Manual Review): compare the current deterministic Plan A with coded-agent Plan B, inspect changed fields and routing decisions, then record a human accuracy verdict. The experiment does not alter the reviewed CSV or provider memory.
+- **Experimental Agentic A/B Test** (inside Manual Review): compare the current deterministic Plan A with coded-agent Plan B, inspect changed fields and routing decisions, optionally request an advisory LLM judge result in Gradio, then record a human accuracy verdict. The experiment does not alter the reviewed CSV or provider memory.
 - **RAG Context**: selected invoice details, compact provider context, validation state, Gemini summary, and OCR text.
 - **Provider Memory**: provider-wide tips, OCR corrections, feedback, examples, and validation history.
 - **Invoice Fields**: required schema reference.

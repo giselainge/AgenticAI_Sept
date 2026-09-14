@@ -26,13 +26,14 @@ Unsupported documents must be classified as `unsupported` or `valid_invoice=fals
 Keep the project as a lightweight Python app unless the user explicitly asks for a deeper packaging refactor. The scripts in `scripts/` are stable commands and should remain runnable:
 
 - `scripts/dashboard.py`: local HTTP dashboard, import workflow, manual review, provider memory updates, CSV export, Gemini import controls, and PDF preview.
-- `scripts/gradio_app.py`: loopback-only local Plan A/Plan B lab and provider-memory viewer; external LLM calls stay disabled.
+- `scripts/gradio_app.py`: loopback-only local Plan A/Plan B lab and provider-memory viewer; Plan B Gemini extraction and the independent judge are separate explicit opt-in calls.
 - `scripts/ocr_text_extraction.py`: OCR/text extraction pipeline for PDFs and image files.
 - `scripts/extract_invoice_fields.py`: deterministic parser that reads OCR text files and writes structured invoice rows.
 - `scripts/second_pass_llm.py`: Gemini PDF second-pass orchestration with RAG context, TXT parsing, normalization, validation, and stable artifact output.
 - `llm/agent/models.py`: typed LLM prompt, payload, normalized extraction, and runtime result models.
 - `llm/agent/prompts.py`: LLM prompt templates.
 - `llm/agent/workflow.py`: experimental Plan B coded-agent state machine and isolated A/B artifacts.
+- `llm/agent/judge.py`: optional independent A/B evaluator for a user-configured OpenAI-compatible endpoint.
 - `llm/api/schemas.py`: typed request/output schemas for API-style integrations.
 - `rag/adaptive_rag.py`: local JSON provider memory adapter, OCR corrections, feedback recording, provider-scoped retrieval, and conversion into LLM-facing `RagSnippet` objects.
 
@@ -162,7 +163,7 @@ uv run pytest
 - Store generated OCR, CSV, JSON, and report outputs under `data/data_pdf/`, `data/data_txt/`, `data/data_processed/`, or `rag/` as appropriate.
 - Keep shared constants and small reusable helpers in `invoice_parser/` instead of duplicating them across entry-point scripts.
 - Keep OCR, deterministic extraction, Gemini second-pass extraction, RAG memory, dashboard review, and validation logic separated by clear module boundaries.
-- Keep Plan B experimental and side-effect free with respect to the review CSV and provider memory. Agent traces must not include API keys or full OCR/PDF content. A/B accuracy claims require a human verdict or labeled ground truth.
+- Keep Plan B experimental and side-effect free with respect to the review CSV and provider memory. Agent traces must not include API keys or full OCR/PDF content. A/B accuracy claims require a human verdict or labeled ground truth. The LLM judge remains advisory, outside Plan B, and cannot route or approve invoices.
 - Keep LLM schemas/models in `llm/agent/` and `llm/api/`; keep the executable second-pass workflow in `scripts/second_pass_llm.py`.
 - RAG may import `llm.agent.models.RagSnippet` for prompt-ready context, but provider memory ownership stays in `rag/adaptive_rag.py`.
 - Do not add a model-download or vector-embedding dependency without explicit user authorization. Do not add a `src/` layout unless the user explicitly asks.

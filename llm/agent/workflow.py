@@ -16,7 +16,8 @@ from pydantic import BaseModel, Field
 from invoice_parser.paths import DEFAULT_AGENTIC_AB_DIR
 from invoice_parser.providers import canonical_provider
 from invoice_parser.schema import FIELDNAMES, NULL_VALUE
-from llm.agent.models import RagSnippet, SecondPassResult
+from llm.agent.judge import run_llm_judge
+from llm.agent.models import JudgeCaller, LlmJudgeResult, RagSnippet, SecondPassResult
 from rag.adaptive_rag import build_llm_rag_snippets, load_kb, row_signature
 from scripts.extract_invoice_fields import extract_invoice_type, extract_row, read_ocr_body
 
@@ -58,7 +59,7 @@ class PlanResult(BaseModel):
 
 
 class AgenticABResult(BaseModel):
-    schema_version: int = 1
+    schema_version: int = 2
     generated_at: str
     source_name: str
     plan_a: PlanResult
@@ -66,6 +67,7 @@ class AgenticABResult(BaseModel):
     comparison: dict[str, Any]
     plan_b_trace: list[AgentEvent]
     artifact_path: str | None = None
+    llm_judge: LlmJudgeResult | None = None
     evaluation: dict[str, Any] | None = None
 
 
@@ -464,5 +466,33 @@ def record_ab_verdict(
         "reviewer_note": note.strip(),
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
     }
+    path.write_text(json.dumps(result.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
+    return result
+
+
+def judge_ab_artifact(
+    artifact_path: str | Path,
+    *,
+    base_url: str = "",
+    api_key: str = "",
+    model: str = "",
+    judge_runner: JudgeCaller | None = None,
+) -> AgenticABResult:
+    """Attach an advisory LLM-judge result without changing the human verdict."""
+    path = Path(artifact_path)
+    result = AgenticABResult.model_validate_json(path.read_text(encoding="utf-8"))
+    text_file = Path(str(result.plan_a.row.get("ocr_text_file") or ""))
+    if not text_file.exists() or not text_file.is_file():
+        raise FileNotFoundError("The OCR evidence file recorded by the A/B run is unavailable.")
+    _, ocr_text = read_ocr_body(text_file)
+    result.llm_judge = run_llm_judge(
+        ocr_text=ocr_text,
+        plan_a=result.plan_a,
+        plan_b=result.plan_b,
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        caller=judge_runner,
+    )
     path.write_text(json.dumps(result.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
     return result

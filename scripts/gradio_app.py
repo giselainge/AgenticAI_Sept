@@ -20,7 +20,7 @@ from invoice_parser.paths import (
     DEFAULT_RAW_DIR,
     DEFAULT_VECTOR_STORE_DIR,
 )
-from llm.agent.workflow import record_ab_verdict, run_agentic_ab_test
+from llm.agent.workflow import judge_ab_artifact, record_ab_verdict, run_agentic_ab_test
 from rag.adaptive_rag import DEFAULT_KB, load_kb
 from scripts.ocr_text_extraction import SUPPORTED_EXTENSIONS, process_file
 
@@ -71,16 +71,24 @@ def _prepare_inputs(uploaded_file: Any) -> tuple[Path, Path | None, str]:
     )
 
 
-def run_local_ab(uploaded_file: Any) -> tuple[Any, ...]:
-    """Run both plans with external LLM access disabled."""
+def run_local_ab(
+    uploaded_file: Any,
+    enable_plan_b_llm: bool = False,
+    plan_b_model: str = "",
+    plan_b_api_key: str = "",
+) -> tuple[Any, ...]:
+    """Run both plans; Plan B model use requires an explicit UI opt-in."""
     try:
         text_path, pdf_path, source_label = _prepare_inputs(uploaded_file)
+        selected_key = (plan_b_api_key or os.getenv("GEMINI_API_KEY", "")) if enable_plan_b_llm else ""
+        selected_model = (plan_b_model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")).strip()
         result = run_agentic_ab_test(
             text_path,
             pdf_file=pdf_path,
             kb_path=DEFAULT_KB,
             output_dir=DEFAULT_AGENTIC_AB_DIR,
-            api_key="",
+            api_key=selected_key,
+            model=selected_model,
         )
     except Exception as exc:
         status = f"Local A/B test failed: {exc}"
@@ -105,6 +113,34 @@ def save_verdict(artifact_path: str, preferred_plan: str, note: str) -> str:
     except Exception as exc:
         return f"Could not save the local verdict: {exc}"
     return f"Saved verdict '{result.evaluation['preferred_plan']}' in {artifact_path}."
+
+
+def run_judge(artifact_path: str, base_url: str, model: str, api_key: str) -> tuple[str, dict[str, Any]]:
+    """Run the optional judge only after an explicit local UI action."""
+    if not artifact_path:
+        return "Run an A/B test before invoking the judge.", {}
+    selected_url = (base_url or os.getenv("JUDGE_BASE_URL", "")).strip()
+    selected_model = (model or os.getenv("JUDGE_MODEL", "")).strip()
+    selected_key = api_key or os.getenv("JUDGE_API_KEY", "")
+    try:
+        result = judge_ab_artifact(
+            artifact_path,
+            base_url=selected_url,
+            api_key=selected_key,
+            model=selected_model,
+        )
+    except Exception as exc:
+        return f"LLM judge could not run: {exc}", {}
+    judge = result.llm_judge
+    if judge is None:
+        return "LLM judge produced no result.", {}
+    if judge.status != "completed":
+        return f"LLM judge status: {judge.status}. {judge.summary}", judge.model_dump()
+    return (
+        f"LLM judge recommends {judge.preferred_plan} with confidence {judge.confidence}. "
+        "A human verdict is still required.",
+        judge.model_dump(),
+    )
 
 
 def knowledge_base_view() -> tuple[list[list[Any]], dict[str, Any]]:
@@ -144,7 +180,8 @@ def build_demo() -> Any:
             "Runs on this computer. Plan A uses OCR and deterministic extraction. "
             "Plan B uses the five-agent supervisor workflow and provider knowledge base. "
             "The supported categories are electricity, water, natural gas, and telecom; "
-            "other documents are rejected. External LLM calls are disabled in this local interface."
+            "other documents are rejected. Plan B extraction and the independent judge call a model only "
+            "when you explicitly enable the corresponding action."
         )
         with gr.Tab("Plan A / Plan B"):
             invoice = gr.File(
@@ -152,6 +189,17 @@ def build_demo() -> Any:
                 file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"],
                 type="filepath",
             )
+            with gr.Accordion("Optional Plan B Gemini extraction", open=False):
+                gr.Markdown(
+                    "When enabled, Plan B sends the invoice PDF, OCR evidence, and provider RAG context to "
+                    "Gemini. Leave it disabled for a fully offline OCR + agent-rules comparison."
+                )
+                enable_plan_b_llm = gr.Checkbox(label="Enable Gemini for Plan B", value=False)
+                plan_b_model = gr.Textbox(
+                    value=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+                    label="Plan B Gemini model",
+                )
+                plan_b_api_key = gr.Textbox(label="Gemini API key", type="password")
             run_button = gr.Button("Run local A/B test", variant="primary")
             status = gr.Markdown()
             with gr.Row():
@@ -164,7 +212,7 @@ def build_demo() -> Any:
 
             run_button.click(
                 run_local_ab,
-                inputs=invoice,
+                inputs=[invoice, enable_plan_b_llm, plan_b_model, plan_b_api_key],
                 outputs=[status, plan_a, plan_b, comparison, trace, artifact, artifact_state],
             )
 
@@ -182,6 +230,32 @@ def build_demo() -> Any:
                 inputs=[artifact_state, verdict, verdict_note],
                 outputs=verdict_status,
             )
+
+            with gr.Accordion("Optional independent LLM judge", open=False):
+                gr.Markdown(
+                    "The judge compares both outputs only with OCR evidence. The invoice text is sent to the "
+                    "configured endpoint only when you click **Run LLM judge**. Its recommendation does not "
+                    "replace the human verdict."
+                )
+                judge_base_url = gr.Textbox(
+                    value=os.getenv("JUDGE_BASE_URL", ""),
+                    label="OpenAI-compatible base URL",
+                    placeholder="http://127.0.0.1:8000/v1",
+                )
+                judge_model = gr.Textbox(
+                    value=os.getenv("JUDGE_MODEL", ""),
+                    label="Judge model",
+                    placeholder="your-served-model-name",
+                )
+                judge_api_key = gr.Textbox(label="Judge API key (if required)", type="password")
+                judge_button = gr.Button("Run LLM judge")
+                judge_status = gr.Markdown()
+                judge_result = gr.JSON(label="Advisory judge result")
+                judge_button.click(
+                    run_judge,
+                    inputs=[artifact_state, judge_base_url, judge_model, judge_api_key],
+                    outputs=[judge_status, judge_result],
+                )
 
         with gr.Tab("Provider knowledge base"):
             gr.Markdown(

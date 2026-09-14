@@ -8,6 +8,9 @@ x-billing-service: &billing-service
   restart: unless-stopped
   environment: &billing-service-environment
     GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+    JUDGE_BASE_URL: ${JUDGE_BASE_URL:-}
+    JUDGE_MODEL: ${JUDGE_MODEL:-}
+    JUDGE_API_KEY: ${JUDGE_API_KEY:-}
     INVOICE_DATA_ROOT: /app/data
     RAG_KB_PATH: /app/runtime/knowledge_base.json
     VECTOR_STORE_DIR: /app/runtime/vector_store
