@@ -645,6 +645,15 @@ def run_tesseract_pdf_pass(
         with Image.open(page_path) as opened:
             image = ImageOps.exif_transpose(opened).convert("RGB")
             if enhanced:
+                minimum_dimension = max(1, min(image.width, image.height))
+                scale = min(OCR_IMAGE_MAX_SCALE, OCR_IMAGE_MIN_DIMENSION / minimum_dimension)
+                max_scale_for_pixels = (OCR_IMAGE_MAX_PIXELS / max(1, image.width * image.height)) ** 0.5
+                scale = max(1.0, min(scale, max_scale_for_pixels))
+                if scale > 1.05:
+                    image = image.resize(
+                        (round(image.width * scale), round(image.height * scale)),
+                        Image.Resampling.LANCZOS,
+                    )
                 image = ImageOps.autocontrast(ImageOps.grayscale(image), cutoff=1)
                 image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=180, threshold=3))
             page_texts.append(
