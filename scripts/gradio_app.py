@@ -249,10 +249,15 @@ def _execute_local_ab(
     enable_plan_b_llm: bool,
     plan_b_model: str,
     plan_b_api_key: str,
+    llm_provider: str = "gemini",
 ) -> tuple[AgenticABResult, str, dict[str, Any]]:
     text_path, pdf_path, source_label, ocr_result = _prepare_inputs(uploaded_file)
-    selected_key = (plan_b_api_key or os.getenv("GEMINI_API_KEY", "")) if enable_plan_b_llm else ""
-    selected_model = (plan_b_model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")).strip()
+    selected_provider = "openai" if llm_provider == "openai" else "gemini"
+    key_env = "OPENAI_API_KEY" if selected_provider == "openai" else "GEMINI_API_KEY"
+    model_env = "OPENAI_MODEL" if selected_provider == "openai" else "GEMINI_MODEL"
+    model_default = "gpt-5.6-terra" if selected_provider == "openai" else "gemini-3.5-flash"
+    selected_key = (plan_b_api_key or os.getenv(key_env, "")) if enable_plan_b_llm else ""
+    selected_model = (plan_b_model or os.getenv(model_env, model_default)).strip()
     result = run_agentic_ab_test(
         text_path,
         pdf_file=pdf_path,
@@ -260,6 +265,7 @@ def _execute_local_ab(
         output_dir=DEFAULT_AGENTIC_AB_DIR,
         api_key=selected_key,
         model=selected_model,
+        llm_provider=selected_provider,
     )
     ocr = _ocr_diagnostics(ocr_result)
     result.preprocessing = ocr
@@ -277,11 +283,12 @@ def run_local_ab(
     enable_plan_b_llm: bool = False,
     plan_b_model: str = "",
     plan_b_api_key: str = "",
+    llm_provider: str = "gemini",
 ) -> tuple[Any, ...]:
     """Run both plans; Plan B model use requires an explicit UI opt-in."""
     try:
         result, source_label, _ = _execute_local_ab(
-            uploaded_file, enable_plan_b_llm, plan_b_model, plan_b_api_key
+            uploaded_file, enable_plan_b_llm, plan_b_model, plan_b_api_key, llm_provider
         )
     except Exception as exc:
         status = f"Local A/B test failed: {exc}"
@@ -303,11 +310,12 @@ def run_local_inspection(
     enable_plan_b_llm: bool = False,
     plan_b_model: str = "",
     plan_b_api_key: str = "",
+    llm_provider: str = "gemini",
 ) -> tuple[Any, ...]:
     """Populate the field, OCR, post-processing and audit inspection views."""
     try:
         result, source_label, ocr = _execute_local_ab(
-            uploaded_file, enable_plan_b_llm, plan_b_model, plan_b_api_key
+            uploaded_file, enable_plan_b_llm, plan_b_model, plan_b_api_key, llm_provider
         )
     except Exception as exc:
         return f"Local A/B test failed: {exc}", {}, [], {}, {}, {}, [], {}, [], "", ""
@@ -347,19 +355,23 @@ def run_judge(
     api_key: str,
     provider: str = "openai_compatible",
     extraction_api_key: str = "",
+    extraction_provider: str = "gemini",
 ) -> tuple[str, dict[str, Any]]:
     """Run the optional judge only after an explicit local UI action."""
     if not artifact_path:
         return "Run an A/B test before invoking the judge.", {}
-    selected_provider = "gemini" if provider == "gemini" else "openai_compatible"
+    selected_provider = provider if provider in {"gemini", "openai"} else "openai_compatible"
     selected_url = (base_url or os.getenv("JUDGE_BASE_URL", "")).strip()
     selected_model = (
         model
         or os.getenv("JUDGE_MODEL", "")
         or (os.getenv("GEMINI_MODEL", "gemini-3.5-flash") if selected_provider == "gemini" else "")
+        or (os.getenv("OPENAI_MODEL", "gpt-5.6-terra") if selected_provider == "openai" else "")
     ).strip()
-    if selected_provider == "gemini":
-        selected_key = api_key or extraction_api_key or os.getenv("JUDGE_API_KEY", "")
+    if selected_provider in {"gemini", "openai"}:
+        reusable_key = extraction_api_key if extraction_provider == selected_provider else ""
+        provider_env = "GEMINI_API_KEY" if selected_provider == "gemini" else "OPENAI_API_KEY"
+        selected_key = api_key or reusable_key or os.getenv("JUDGE_API_KEY", "") or os.getenv(provider_env, "")
     else:
         selected_key = api_key or os.getenv("JUDGE_API_KEY", "")
     try:
@@ -391,6 +403,7 @@ def run_judge_inspection(
     api_key: str,
     provider: str = "openai_compatible",
     extraction_api_key: str = "",
+    extraction_provider: str = "gemini",
 ) -> tuple[str, dict[str, Any], list[list[Any]]]:
     status, judge = run_judge(
         artifact_path,
@@ -399,6 +412,7 @@ def run_judge_inspection(
         api_key,
         provider,
         extraction_api_key,
+        extraction_provider,
     )
     rows: list[list[Any]] = []
     path = Path(artifact_path) if artifact_path else None
@@ -426,7 +440,12 @@ def _four_case_table(result: FourCaseEvaluation) -> list[list[Any]]:
     ]
 
 
-def run_four_cases(uploaded_file: Any, gemini_model: str, gemini_api_key: str) -> tuple[Any, ...]:
+def run_four_cases(
+    uploaded_file: Any,
+    model: str,
+    api_key: str,
+    llm_provider: str = "gemini",
+) -> tuple[Any, ...]:
     """Run all available cases; missing model configuration remains explicit."""
     try:
         text_path, pdf_path, source_label, _ = _prepare_inputs(uploaded_file)
@@ -435,8 +454,9 @@ def run_four_cases(uploaded_file: Any, gemini_model: str, gemini_api_key: str) -
             pdf_file=pdf_path,
             kb_path=DEFAULT_KB,
             output_dir=DEFAULT_AGENTIC_AB_DIR / "four_case",
-            gemini_api_key=gemini_api_key,
-            gemini_model=(gemini_model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")).strip(),
+            llm_provider=llm_provider,
+            llm_api_key=api_key,
+            llm_model=model,
         )
     except Exception as exc:
         return f"Four-case assessment failed: {exc}", [], {}, "", ""
@@ -455,18 +475,22 @@ def run_four_case_judge_ui(
     api_key: str,
     provider: str = "openai_compatible",
     extraction_api_key: str = "",
+    extraction_provider: str = "gemini",
 ) -> tuple[str, dict[str, Any]]:
     if not artifact_path:
         return "Run the four cases before invoking the judge.", {}
     try:
-        selected_provider = "gemini" if provider == "gemini" else "openai_compatible"
+        selected_provider = provider if provider in {"gemini", "openai"} else "openai_compatible"
         selected_model = (
             model
             or os.getenv("JUDGE_MODEL", "")
             or (os.getenv("GEMINI_MODEL", "gemini-3.5-flash") if selected_provider == "gemini" else "")
+            or (os.getenv("OPENAI_MODEL", "gpt-5.6-terra") if selected_provider == "openai" else "")
         ).strip()
-        if selected_provider == "gemini":
-            selected_key = api_key or extraction_api_key or os.getenv("JUDGE_API_KEY", "")
+        if selected_provider in {"gemini", "openai"}:
+            reusable_key = extraction_api_key if extraction_provider == selected_provider else ""
+            provider_env = "GEMINI_API_KEY" if selected_provider == "gemini" else "OPENAI_API_KEY"
+            selected_key = api_key or reusable_key or os.getenv("JUDGE_API_KEY", "") or os.getenv(provider_env, "")
         else:
             selected_key = api_key or os.getenv("JUDGE_API_KEY", "")
         result = judge_four_case_artifact(
@@ -545,17 +569,24 @@ def build_demo() -> Any:
                 file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"],
                 type="filepath",
             )
-            with gr.Accordion("Optional Plan B Gemini extraction", open=False):
+            with gr.Accordion("Optional Plan B LLM extraction", open=False):
                 gr.Markdown(
                     "When enabled, Plan B sends the invoice PDF, OCR evidence, and provider RAG context to "
-                    "Gemini. Leave it disabled for a fully offline OCR + agent-rules comparison."
+                    "the selected model provider. Leave it disabled for a fully offline OCR + agent-rules "
+                    "comparison. Keys remain in memory for the request and are never saved."
                 )
-                enable_plan_b_llm = gr.Checkbox(label="Enable Gemini for Plan B", value=False)
+                enable_plan_b_llm = gr.Checkbox(label="Enable LLM for Plan B", value=False)
+                plan_b_provider = gr.Dropdown(
+                    choices=[("OpenAI", "openai"), ("Gemini", "gemini")],
+                    value=os.getenv("LLM_PROVIDER", "openai"),
+                    label="Extraction provider",
+                )
                 plan_b_model = gr.Textbox(
-                    value=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
-                    label="Plan B Gemini model",
+                    value="",
+                    label="Plan B model (blank uses provider default)",
+                    placeholder="OpenAI: gpt-5.6-terra; Gemini: gemini-3.5-flash",
                 )
-                plan_b_api_key = gr.Textbox(label="Gemini API key", type="password")
+                plan_b_api_key = gr.Textbox(label="Provider API key", type="password")
             run_button = gr.Button("Run local A/B test", variant="primary")
             status = gr.Markdown()
             run_summary = gr.JSON(label="Field retrieval and routing summary")
@@ -593,7 +624,7 @@ def build_demo() -> Any:
 
             run_button.click(
                 run_local_inspection,
-                inputs=[invoice, enable_plan_b_llm, plan_b_model, plan_b_api_key],
+                inputs=[invoice, enable_plan_b_llm, plan_b_model, plan_b_api_key, plan_b_provider],
                 outputs=[
                     status,
                     run_summary,
@@ -628,12 +659,13 @@ def build_demo() -> Any:
                 gr.Markdown(
                     "The judge compares both outputs only with OCR evidence. The invoice text is sent to the "
                     "configured endpoint only when you click **Run LLM judge**. Its recommendation does not "
-                    "replace the human verdict. Select Gemini to reuse the Plan B key; leave the judge-key "
-                    "field blank in that case."
+                    "replace the human verdict. Select the same official provider to reuse the Plan B key; "
+                    "leave the judge-key field blank in that case."
                 )
                 judge_provider = gr.Dropdown(
                     choices=[
                         ("Gemini (same key allowed)", "gemini"),
+                        ("OpenAI (same project key allowed)", "openai"),
                         ("OpenAI-compatible / Qwen", "openai_compatible"),
                     ],
                     value=os.getenv("JUDGE_PROVIDER", "gemini"),
@@ -641,16 +673,16 @@ def build_demo() -> Any:
                 )
                 judge_base_url = gr.Textbox(
                     value=os.getenv("JUDGE_BASE_URL", ""),
-                    label="OpenAI-compatible base URL (ignored for Gemini)",
+                    label="Base URL (only for OpenAI-compatible / Qwen)",
                     placeholder="http://127.0.0.1:8000/v1",
                 )
                 judge_model = gr.Textbox(
-                    value=os.getenv("JUDGE_MODEL", "") or os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
-                    label="Judge model",
-                    placeholder="Gemini model or served model name",
+                    value=os.getenv("JUDGE_MODEL", ""),
+                    label="Judge model (blank uses official-provider default)",
+                    placeholder="gpt-5.6-terra, gemini-3.5-flash, or served model name",
                 )
                 judge_api_key = gr.Textbox(
-                    label="Judge API key (blank reuses Plan B Gemini key)",
+                    label="Judge API key (blank reuses a matching extraction key)",
                     type="password",
                 )
                 judge_button = gr.Button("Run LLM judge")
@@ -665,15 +697,16 @@ def build_demo() -> Any:
                         judge_api_key,
                         judge_provider,
                         plan_b_api_key,
+                        plan_b_provider,
                     ],
                     outputs=[judge_status, judge_result, field_table],
                 )
 
         with gr.Tab("Four-case assessment"):
             gr.Markdown(
-                "Compare the four requested configurations on one invoice. With the Gemini key blank, "
+                "Compare the four requested configurations on one invoice. With the provider key blank, "
                 "the two local cases run and the two LLM cases are marked unavailable. Pasting a key and "
-                "clicking **Run four cases** makes two Gemini extraction calls: one without provider RAG "
+                "clicking **Run four cases** makes two extraction calls: one without provider RAG "
                 "and one inside the agentic workflow. The password field is request-only and is not saved."
             )
             four_case_invoice = gr.File(
@@ -681,11 +714,17 @@ def build_demo() -> Any:
                 file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"],
                 type="filepath",
             )
-            four_case_model = gr.Textbox(
-                value=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
-                label="Gemini model",
+            four_case_provider = gr.Dropdown(
+                choices=[("OpenAI", "openai"), ("Gemini", "gemini")],
+                value=os.getenv("LLM_PROVIDER", "openai"),
+                label="Extraction provider",
             )
-            four_case_key = gr.Textbox(label="Gemini API key", type="password")
+            four_case_model = gr.Textbox(
+                value="",
+                label="Model (blank uses provider default)",
+                placeholder="OpenAI: gpt-5.6-terra; Gemini: gemini-3.5-flash",
+            )
+            four_case_key = gr.Textbox(label="Provider API key", type="password")
             four_case_button = gr.Button("Run four cases", variant="primary")
             four_case_status = gr.Markdown()
             four_case_table = gr.Dataframe(
@@ -708,7 +747,7 @@ def build_demo() -> Any:
             four_case_artifact_state = gr.State("")
             four_case_button.click(
                 run_four_cases,
-                inputs=[four_case_invoice, four_case_model, four_case_key],
+                inputs=[four_case_invoice, four_case_model, four_case_key, four_case_provider],
                 outputs=[
                     four_case_status,
                     four_case_table,
@@ -721,12 +760,13 @@ def build_demo() -> Any:
             with gr.Accordion("Optional independent four-case judge", open=False):
                 gr.Markdown(
                     "The judge uses the OCR evidence to rank only the available candidates. It is advisory; "
-                    "save a separate human verdict after checking the source invoice. Select Gemini to reuse "
-                    "the extraction key already pasted above."
+                    "save a separate human verdict after checking the source invoice. Select the same official "
+                    "provider to reuse the extraction key already pasted above."
                 )
                 four_judge_provider = gr.Dropdown(
                     choices=[
                         ("Gemini (same key allowed)", "gemini"),
+                        ("OpenAI (same project key allowed)", "openai"),
                         ("OpenAI-compatible / Qwen", "openai_compatible"),
                     ],
                     value=os.getenv("JUDGE_PROVIDER", "gemini"),
@@ -734,16 +774,16 @@ def build_demo() -> Any:
                 )
                 four_judge_base_url = gr.Textbox(
                     value=os.getenv("JUDGE_BASE_URL", ""),
-                    label="OpenAI-compatible base URL (ignored for Gemini)",
+                    label="Base URL (only for OpenAI-compatible / Qwen)",
                     placeholder="http://127.0.0.1:8000/v1",
                 )
                 four_judge_model = gr.Textbox(
-                    value=os.getenv("JUDGE_MODEL", "") or os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
-                    label="Judge model",
-                    placeholder="Gemini model or served model name",
+                    value=os.getenv("JUDGE_MODEL", ""),
+                    label="Judge model (blank uses official-provider default)",
+                    placeholder="gpt-5.6-terra, gemini-3.5-flash, or served model name",
                 )
                 four_judge_key = gr.Textbox(
-                    label="Judge API key (blank reuses Gemini extraction key)",
+                    label="Judge API key (blank reuses a matching extraction key)",
                     type="password",
                 )
                 four_judge_button = gr.Button("Run four-case LLM judge")
@@ -758,6 +798,7 @@ def build_demo() -> Any:
                         four_judge_key,
                         four_judge_provider,
                         four_case_key,
+                        four_case_provider,
                     ],
                     outputs=[four_judge_status, four_judge_result],
                 )

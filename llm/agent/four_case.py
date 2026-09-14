@@ -64,14 +64,14 @@ def _candidate(case_id: str, label: str, plan: PlanResult, *, status: str = "mea
     )
 
 
-def _direct_llm_plan(row: dict[str, Any], kb_path: Path) -> PlanResult:
+def _direct_llm_plan(row: dict[str, Any], kb_path: Path, provider: str) -> PlanResult:
     normalized = {key: str(value) for key, value in row.items() if isinstance(value, (str, int, float, bool))}
     errors = validate_invoice(normalized)
     provider_id = canonical_provider(normalized.get("provider_name", ""))
     approved = count_prior_approved(load_kb(kb_path), provider_id, normalized)
     return PlanResult(
         name="OCR + LLM",
-        method="Gemini PDF/OCR extraction without provider RAG or agent routing",
+        method=f"{provider.title()} PDF/OCR extraction without provider RAG or agent routing",
         row=normalized,
         validation_errors=errors,
         route=route_invoice(normalized, errors, approved),
@@ -95,6 +95,9 @@ def run_four_case_evaluation(
     output_dir: str | Path,
     gemini_api_key: str = "",
     gemini_model: str = "gemini-3.5-flash",
+    llm_provider: str = "gemini",
+    llm_api_key: str | None = None,
+    llm_model: str | None = None,
 ) -> FourCaseEvaluation:
     text_path = Path(text_file)
     pdf_path = Path(pdf_file) if pdf_file else None
@@ -113,20 +116,25 @@ def run_four_case_evaluation(
         "ocr_agentic": _candidate("ocr_agentic", "OCR + agentic rules", offline.plan_b),
     }
 
-    if not gemini_api_key or pdf_path is None or not pdf_path.exists():
-        reason = "A PDF and explicitly supplied Gemini API key are required."
+    selected_provider = "openai" if llm_provider == "openai" else "gemini"
+    selected_key = gemini_api_key if llm_api_key is None else llm_api_key
+    selected_model = llm_model or (
+        "gpt-5.6-terra" if selected_provider == "openai" else gemini_model
+    )
+    if not selected_key or pdf_path is None or not pdf_path.exists():
+        reason = f"A PDF and explicitly supplied {selected_provider.title()} API key are required."
         cases["ocr_llm"] = FourCaseCandidate(
             case_id="ocr_llm",
             label="OCR + LLM",
             status="unavailable",
-            method="Gemini PDF/OCR extraction without agentic RAG",
+            method=f"{selected_provider.title()} PDF/OCR extraction without agentic RAG",
             errors=[reason],
         )
         cases["ocr_llm_agentic"] = FourCaseCandidate(
             case_id="ocr_llm_agentic",
             label="OCR + LLM + agentic workflow",
             status="unavailable",
-            method="Plan B supervisor with provider RAG and Gemini extraction",
+            method=f"Plan B supervisor with provider RAG and {selected_provider.title()} extraction",
             errors=[reason],
         )
     else:
@@ -138,14 +146,15 @@ def run_four_case_evaluation(
             provider_name=offline.plan_a.row.get("provider_name"),
             invoice_type=offline.plan_a.row.get("invoice_type"),
             source_file=source_name,
-            api_key=gemini_api_key,
-            model=gemini_model,
+            api_key=selected_key,
+            model=selected_model,
+            provider=selected_provider,
             output_dir=output / "direct_llm",
             rag_snippets=[],
             kb_path=kb_path,
         )
         if direct.used and not direct.errors:
-            direct_plan = _direct_llm_plan(direct.parsed, Path(kb_path))
+            direct_plan = _direct_llm_plan(direct.parsed, Path(kb_path), selected_provider)
             direct_plan.row["ocr_text_file"] = str(text_path)
             cases["ocr_llm"] = _candidate("ocr_llm", "OCR + LLM", direct_plan)
         else:
@@ -153,7 +162,7 @@ def run_four_case_evaluation(
                 case_id="ocr_llm",
                 label="OCR + LLM",
                 status="failed",
-                method="Gemini PDF/OCR extraction without agentic RAG",
+                method=f"{selected_provider.title()} PDF/OCR extraction without agentic RAG",
                 errors=list(direct.errors),
             )
 
@@ -162,8 +171,9 @@ def run_four_case_evaluation(
             pdf_file=pdf_path,
             kb_path=kb_path,
             output_dir=output / "agentic_llm",
-            api_key=gemini_api_key,
-            model=gemini_model,
+            api_key=selected_key,
+            model=selected_model,
+            llm_provider=selected_provider,
         )
         cases["ocr_llm_agentic"] = _candidate(
             "ocr_llm_agentic",

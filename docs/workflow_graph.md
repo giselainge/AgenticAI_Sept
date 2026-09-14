@@ -26,11 +26,11 @@ flowchart TD
         Reports["data/data_processed/reports/"]
         Gemini["data/data_processed/llm_second_pass/"]
         ABArtifact["data/data_processed/agentic_ab_tests/"]
-        VectorIndex["data/data_processed/vector_store/"]
+        VectorIndex["runtime/vector_store/"]
     end
 
     subgraph LocalMemory["Ignored local runtime memory"]
-        Memory["rag/knowledge_base.json (ignored local memory)"]
+        Memory["runtime/knowledge_base.json (ignored local memory)"]
     end
 
     subgraph Review["Human review and approval"]
@@ -97,6 +97,6 @@ Safety boundaries:
 
 - Treat `data/data_raw/` as immutable input. The ignored `data/` tree stays local because invoices and generated artifacts may contain private information.
 - Write generated OCR, PDF, CSV, report, Gemini, A/B, and vector-index artifacts only under `data/`.
-- Keep provider memory in `rag/knowledge_base.json`; it may contain reviewer feedback and should remain ignored unless sanitized.
+- Keep provider memory in `runtime/knowledge_base.json`; it may contain reviewer feedback and should remain ignored unless sanitized.
 - Provider-memory retrieval uses a deterministic local Torch embedding with FAISS/LlamaIndex; it does not download an embedding model.
 - Keep secrets and unapproved private invoice data out of logs, docs, generated reports, and committed files.

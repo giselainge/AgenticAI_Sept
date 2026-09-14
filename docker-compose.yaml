@@ -12,6 +12,7 @@ x-billing-service: &billing-service
     JUDGE_BASE_URL: ${JUDGE_BASE_URL:-}
     JUDGE_MODEL: ${JUDGE_MODEL:-}
     INVOICE_DATA_ROOT: /app/data
+    INVOICE_RUNTIME_ROOT: /app/runtime
     RAG_KB_PATH: /app/runtime/knowledge_base.json
     VECTOR_STORE_DIR: /app/runtime/vector_store
     OCR_LANGUAGES: ${OCR_LANGUAGES:-por+eng}
@@ -23,7 +24,7 @@ x-billing-service: &billing-service
     OMP_THREAD_LIMIT: ${OMP_THREAD_LIMIT:-2}
     HEALTHCHECK_PORT: "8000"
   volumes:
-    - ./data/data:/app/data
+    - ./data:/app/data
     - ./runtime:/app/runtime
   read_only: true
   tmpfs:

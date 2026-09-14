@@ -32,6 +32,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     LC_ALL=C.UTF-8 \
     TZ=UTC \
     INVOICE_DATA_ROOT=/app/data \
+    INVOICE_RUNTIME_ROOT=/app/runtime \
     RAG_KB_PATH=/app/runtime/knowledge_base.json \
     VECTOR_STORE_DIR=/app/runtime/vector_store \
     OCR_LANGUAGES=por+eng \

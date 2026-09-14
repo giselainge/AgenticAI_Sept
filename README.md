@@ -164,6 +164,23 @@ $env:GEMINI_MODEL="gemini-3.5-flash"
 Notes:
 - The dashboard also has a GEMINI_API_KEY field in **Import Invoices**. It is used only for that import request and is not saved.
 - Gemini PDF extraction uses the locked `google-genai` dependency declared in `pyproject.toml`.
+
+## OpenAI project-key configuration
+
+The Gradio A/B lab can use an official OpenAI project key for both PDF extraction and the optional
+judge. Select **OpenAI**, paste the key in the password field, and leave the model blank to use
+`gpt-5.6-terra`. The backend sends PDF requests to the official Responses API with `store: false`.
+The key is kept only in callback memory and is never written to result artifacts or logs.
+
+For the seven-day college test window:
+
+1. Add each tester, such as `i32681@aln.iseg.ulisboa.pt`, to the AgenticBilling API project.
+2. Have that user create their own restricted project key with an expiration of **7 days or less**.
+3. Permit only the Responses endpoint and the selected model, and set a project spend limit.
+4. Delete or let the key expire by day 7. Remove the project member by day 7 when their project
+   access must end as well.
+
+Do not share a personal key. A key created for one user should not be passed to another user.
 - Tests continue to use mocked callers and do not call the real API.
 
 
@@ -180,7 +197,7 @@ Start the loopback-only server:
 uv run python scripts\gradio_app.py
 ```
 
-Open [http://127.0.0.1:7860](http://127.0.0.1:7860). Upload an invoice PDF or image; the app runs the OCR stage automatically. The interface shows required-field retrieval percentages, a 19-field Plan A/Plan B comparison table, OCR and post-processing diagnostics, the five Plan B agent events, a local extraction audit log, the provider knowledge base, a FAISS index rebuild action, the optional judge, and a human verdict control.
+Open [http://127.0.0.1:7860]. Upload an invoice PDF or image; the app runs the OCR stage automatically. The interface shows required-field retrieval percentages, a 19-field Plan A/Plan B comparison table, OCR and post-processing diagnostics, the five Plan B agent events, a local extraction audit log, the provider knowledge base, a FAISS index rebuild action, the optional judge, and a human verdict control.
 
 Each A/B artifact records sanitized preprocessing metadata and stage decisions. It does not store the OCR text, model prompts, or API keys in the audit log. The structured plan rows still contain invoice fields and remain under the ignored local `data/` tree.
 
@@ -188,7 +205,7 @@ Plan B Gemini extraction is disabled by default. Without it, Plan B still runs c
 
 The **Four-case assessment** tab compares OCR + rules, OCR + direct Gemini, OCR + agentic rules, and OCR + Gemini inside the agentic workflow. Leave the key blank to run only the two offline cases. Providing a key and clicking **Run four cases** performs two Gemini calls so the direct and RAG-assisted candidates remain separate. The key is not stored in the result artifact.
 
-The **Optional independent LLM judge** panel can compare both results with the OCR evidence through a user-configured OpenAI-compatible endpoint. It sends invoice text only after **Run LLM judge** is clicked and never replaces the human verdict. Configure the fields in the panel or set:
+The **Optional independent LLM judge** panel can compare both results with the OCR evidence through Gemini or a user-configured OpenAI-compatible endpoint. It sends invoice text only after **Run LLM judge** is clicked and never replaces the human verdict. Select **Gemini** to reuse the request-only extraction key; no base URL is needed. A different Gemini model is preferable for the judge, but the same API key can be used. For an OpenAI-compatible judge, configure:
 
 ```powershell
 $env:JUDGE_BASE_URL="http://127.0.0.1:8000/v1"
@@ -357,21 +374,21 @@ The tests mock Gemini API calls and do not call the real API.
 
 ## Docker And API
 
-The multi-stage Docker image includes Portuguese/English Tesseract, OCRmyPDF runtime tools, a non-root user, a read-only application filesystem, and health checks. Compose runs three services from the same image:
+The multi-stage Docker image includes Portuguese/English Tesseract, OCRmyPDF runtime tools, a non-root user, a read-only application filesystem, and readiness checks. Compose runs three services from the same image:
 
-- FastAPI health service: `http://127.0.0.1:8000/health`
+- FastAPI readiness and runtime profile: `http://127.0.0.1:8000/ready`
 - Invoice dashboard: `http://127.0.0.1:8501/`
 - Gradio A/B lab: `http://127.0.0.1:7860/`
 
-Create local writable directories and start the services:
+For the local/AWS parity test, run:
 
 ```powershell
-New-Item -ItemType Directory -Force data, runtime
-docker compose up --build -d
-docker compose ps
+.\deploy\local.ps1
 ```
 
-`data/` holds invoice inputs and generated artifacts. `runtime/` holds ignored provider memory and the generated vector index. Compose binds all ports to localhost unless `BIND_ADDRESS` is explicitly changed. The API on port 8000 is a health/root service; it is not an OpenAI-compatible `/v1` model server.
+This builds one `linux/amd64` image from `pyproject.toml` and `uv.lock`, starts the three loopback services, checks all endpoints, and prints the OCR quality fingerprint. The temporary AWS script later exports and transfers this exact image through its private S3 bucket. It does not rebuild the application on EC2. Image invoices therefore use the same direct-Tesseract baseline/enhancement path, package versions, Portuguese/English language data, and OCR settings in both environments.
+
+Host invoice data is under `data/` and is mounted as `/app/data`; `runtime/` holds ignored provider memory and the generated vector index. Compose binds all ports to localhost unless `BIND_ADDRESS` is explicitly changed. The API on port 8000 is a readiness/root service; it is not an OpenAI-compatible `/v1` model server. Stop the local containers with `.\deploy\local.ps1 -Down`.
 
 For the temporary self-deleting EC2 deployment, AWS SSO setup, old endpoint check, and early deletion workflow, see [deploy/aws/README.md](deploy/aws/README.md).
 
@@ -413,10 +430,10 @@ Missing or uncertain values are `null` by default.
 
 Provider memory is stored in:
 ```text
-rag/knowledge_base.json
+runtime/knowledge_base.json
 ```
 
-The generated vector index is stored in `data/data_processed/vector_store/` for direct local runs and `/app/runtime/vector_store/` under Compose. Build or refresh it with:
+The generated vector index is stored in `runtime/vector_store/` for direct local runs and `/app/runtime/vector_store/` in the container. Build or refresh it with:
 
 ```powershell
 uv run python rag\adaptive_rag.py index --force

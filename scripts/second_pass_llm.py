@@ -25,12 +25,15 @@ from llm.agent.models import (
     SecondPassResult,
 )
 from llm.agent.prompts import GEMINI_EXTRACTION_PROMPT_TEMPLATE
+from llm.gemini_rest import generate_content as generate_gemini_content
+from llm.openai_rest import create_response as create_openai_response
 from invoice_parser.paths import DEFAULT_LLM_SECOND_PASS_DIR
 from invoice_parser.schema import FIELDNAMES, NULL_VALUE
 from invoice_parser.text_utils import normalize_money, normalize_space
 
 
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip() or "gemini-3.5-flash"
+DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-terra").strip() or "gpt-5.6-terra"
 
 VALID_INVOICE_TYPES = {"electricity", "water", "natural gas", "telecom", "unsupported"}
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -177,11 +180,15 @@ def _call_gemini_with_sdk(
     try:
         from google import genai
         from google.genai import types
-    except ImportError as exc:
-        raise RuntimeError(
-            "Google Gemini SDK is not installed. Run `uv sync --frozen` "
-            "and retry the dashboard Gemini pass."
-        ) from exc
+    except ImportError:
+        return generate_gemini_content(
+            prompt=prompt,
+            api_key=api_key,
+            model=model,
+            timeout=timeout,
+            pdf_file=pdf_file,
+            response_mime_type="text/plain",
+        )
 
     if pdf_file is None:
         raise RuntimeError("PDF file is required for Gemini SDK extraction.")
@@ -219,21 +226,27 @@ def second_pass_extract(
     kb_path: str | Path | None = None,
     timeout: int = 60,
     gemini_caller: GeminiCaller | None = None,
+    provider: str = "gemini",
+    openai_caller: GeminiCaller | None = None,
 ) -> SecondPassResult:
-    selected_model = model or os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
-    result = SecondPassResult(model=selected_model)
+    selected_provider = "openai" if provider == "openai" else "gemini"
+    default_model = DEFAULT_OPENAI_MODEL if selected_provider == "openai" else DEFAULT_MODEL
+    model_environment = "OPENAI_MODEL" if selected_provider == "openai" else "GEMINI_MODEL"
+    key_environment = "OPENAI_API_KEY" if selected_provider == "openai" else "GEMINI_API_KEY"
+    selected_model = model or os.environ.get(model_environment) or default_model
+    result = SecondPassResult(provider=selected_provider, model=selected_model)
 
     if pdf_file is None:
-        result.errors.append("PDF file is required for Gemini second-pass extraction.")
+        result.errors.append(f"PDF file is required for {selected_provider.title()} second-pass extraction.")
         return result
     pdf_path = Path(pdf_file)
     if not pdf_path.exists():
         result.errors.append(f"PDF file does not exist: {pdf_path}")
         return result
 
-    selected_api_key = api_key if api_key is not None else os.environ.get("GEMINI_API_KEY", "")
+    selected_api_key = api_key if api_key is not None else os.environ.get(key_environment, "")
     if not selected_api_key:
-        result.errors.append("Missing GEMINI_API_KEY for Gemini second-pass extraction.")
+        result.errors.append(f"Missing {key_environment} for {selected_provider.title()} second-pass extraction.")
         return result
 
     if rag_snippets is None:
@@ -260,7 +273,20 @@ def second_pass_extract(
         rag_snippets=rag_snippets,
     )
     try:
-        if gemini_caller is not None:
+        if selected_provider == "openai" and openai_caller is not None:
+            try:
+                raw_response = openai_caller(prompt, selected_api_key, selected_model, timeout, pdf_file=pdf_path)
+            except TypeError:
+                raw_response = openai_caller(prompt, selected_api_key, selected_model, timeout)
+        elif selected_provider == "openai":
+            raw_response = create_openai_response(
+                prompt=prompt,
+                api_key=selected_api_key,
+                model=selected_model,
+                timeout=timeout,
+                pdf_file=pdf_path,
+            )
+        elif gemini_caller is not None:
             try:
                 raw_response = gemini_caller(prompt, selected_api_key, selected_model, timeout, pdf_file=pdf_path)
             except TypeError:
@@ -287,8 +313,8 @@ def second_pass_extract(
     output_path.mkdir(parents=True, exist_ok=True)
     stem = pdf_path.stem
     paths = SecondPassArtifactPaths(
-        raw_response_path=output_path / f"{stem}_gemini_raw.txt",
-        normalized_output_path=output_path / f"{stem}_gemini_structured.json",
+        raw_response_path=output_path / f"{stem}_{selected_provider}_raw.txt",
+        normalized_output_path=output_path / f"{stem}_{selected_provider}_structured.json",
     )
     paths.raw_response_path.write_text(raw_response, encoding="utf-8")
     paths.normalized_output_path.write_text(_json_dumps(parsed), encoding="utf-8")

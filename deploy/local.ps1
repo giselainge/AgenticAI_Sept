@@ -21,7 +21,7 @@ try {
         exit 0
     }
 
-    New-Item -ItemType Directory -Path "data/data", "runtime" -Force | Out-Null
+    New-Item -ItemType Directory -Path "data", "runtime" -Force | Out-Null
     if (-not $NoBuild) {
         & docker compose build --pull
         if ($LASTEXITCODE -ne 0) { throw "The local parity image build failed." }

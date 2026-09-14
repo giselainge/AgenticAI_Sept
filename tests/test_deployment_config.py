@@ -51,7 +51,7 @@ def test_compose_runs_api_and_dashboard_with_persistent_runtime_paths() -> None:
     for service in compose["services"].values():
         assert service["read_only"] is True
         assert "ALL" in service["cap_drop"]
-        assert "./data/data:/app/data" in service["volumes"]
+        assert "./data:/app/data" in service["volumes"]
         assert "./runtime:/app/runtime" in service["volumes"]
         assert service["environment"]["RAG_KB_PATH"] == "/app/runtime/knowledge_base.json"
         assert "GEMINI_API_KEY" not in service["environment"]

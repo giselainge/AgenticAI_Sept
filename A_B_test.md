@@ -66,7 +66,7 @@ The prompt treats invoice text as untrusted evidence and tells the model to abst
 
 The judge reads OCR text rather than the original pixels, so it cannot detect an OCR error that changes the evidence itself. Its verdict is advisory and cannot approve or reject an invoice. The human verdict remains required and supplies the ground truth for measuring judge agreement and actual A/B accuracy.
 
-The connector accepts an OpenAI-compatible `/v1/chat/completions` endpoint. Configure `JUDGE_BASE_URL`, `JUDGE_MODEL`, and, only when the server requires one, `JUDGE_API_KEY`. No model is downloaded by this project.
+The judge supports three connectors. **Gemini** needs a model name plus a Gemini API key. **OpenAI** uses the official Responses API and needs an OpenAI project key plus a model; no base URL is entered. Either official provider can reuse the matching request-only extraction key. **OpenAI-compatible** calls `/v1/chat/completions` and needs `JUDGE_BASE_URL`, `JUDGE_MODEL`, and a bearer key only when that server requires one. No judge model is downloaded by this project. A different judge model is preferable for evaluation independence, although one provider key can authorize both calls when its project permissions allow both models.
 
 ## Local Gradio test interface
 
@@ -77,10 +77,10 @@ The **Four-case assessment** tab keeps these configurations distinct:
 | Case | Extraction | Agent workflow | Provider RAG |
 | --- | --- | --- | --- |
 | `ocr_rules` | Deterministic fields from OCR | No | No |
-| `ocr_llm` | Gemini PDF/OCR extraction | No | No |
+| `ocr_llm` | Gemini or OpenAI PDF/OCR extraction | No | No |
 | `ocr_agentic` | Deterministic fields from OCR | Five-agent Plan B | Yes, retrieved but not consumed by the rules extractor |
-| `ocr_llm_agentic` | Gemini PDF/OCR extraction | Five-agent Plan B | Yes, supplied to Gemini |
+| `ocr_llm_agentic` | Gemini or OpenAI PDF/OCR extraction | Five-agent Plan B | Yes, supplied to the selected provider |
 
-With the Gemini key blank, the local cases run and the two model cases are explicitly unavailable. Pasting a key and clicking **Run four cases** makes two Gemini extraction calls. The independent four-case judge ranks available candidates, while a separate human verdict records the verified result. API keys are never written to the artifact.
+With the provider key blank, the local cases run and the two model cases are explicitly unavailable. Pasting a key and clicking **Run four cases** makes two extraction calls to the selected provider. The independent four-case judge ranks available candidates, while a separate human verdict records the verified result. API keys are never written to the artifact.
 
 The assessment defines electricity, water, natural gas, and telecom as supported invoice categories. The classification and review-routing agents reject documents outside those four categories.

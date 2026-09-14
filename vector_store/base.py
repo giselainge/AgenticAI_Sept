@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from invoice_parser.paths import DEFAULT_VECTOR_STORE_DIR, PROJECT_ROOT
+from invoice_parser.paths import DEFAULT_KB_PATH, DEFAULT_VECTOR_STORE_DIR
 from invoice_parser.providers import canonical_provider
 from vector_store.documents import DOCUMENTS, provider_memory_documents
 
@@ -21,7 +21,7 @@ INDEX_SIMILARITY_TOP_K = int(os.getenv("INDEX_SIMILARITY_TOP_K", "3"))
 SENTENCE_SPLITTER_CHUNK_SIZE = int(os.getenv("SENTENCE_SPLITTER_CHUNK_SIZE", "512"))
 SENTENCE_SPLITTER_CHUNK_OVERLAP = int(os.getenv("SENTENCE_SPLITTER_CHUNK_OVERLAP", "64"))
 INDEX_PATH = DEFAULT_VECTOR_STORE_DIR
-DEFAULT_KB = Path(os.getenv("RAG_KB_PATH", str(PROJECT_ROOT / "rag" / "knowledge_base.json")))
+DEFAULT_KB = DEFAULT_KB_PATH
 
 _INDEX_CACHE: Any | None = None
 _INDEX_CACHE_PATH: Path | None = None

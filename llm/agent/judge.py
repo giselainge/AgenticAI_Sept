@@ -10,6 +10,8 @@ from urllib import error, parse, request
 
 from invoice_parser.schema import FIELDNAMES
 from llm.agent.models import FourCaseJudgeResult, JudgeCaller, LlmJudgeResult
+from llm.gemini_rest import generate_content as generate_gemini_content
+from llm.openai_rest import create_response as create_openai_response
 
 
 FOUR_CASE_IDS = ("ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic")
@@ -146,8 +148,14 @@ def call_gemini_judge(
     try:
         from google import genai
         from google.genai import types
-    except ImportError as exc:
-        raise RuntimeError("Google Gemini SDK is not installed. Run `uv sync --frozen`.") from exc
+    except ImportError:
+        return generate_gemini_content(
+            prompt=prompt,
+            api_key=api_key,
+            model=model,
+            timeout=timeout,
+            response_mime_type="application/json",
+        )
 
     client = genai.Client(
         api_key=api_key,
@@ -162,6 +170,55 @@ def call_gemini_judge(
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("Gemini judge returned an empty response.")
     return content
+
+
+def call_openai_judge(
+    *,
+    prompt: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    timeout: float = 90.0,
+) -> str:
+    """Call the official OpenAI Responses API; ``base_url`` is intentionally fixed."""
+    _ = base_url
+    return create_openai_response(
+        prompt=prompt,
+        api_key=api_key,
+        model=model,
+        timeout=timeout,
+        max_output_tokens=3000,
+    )
+
+
+def _provider(value: str) -> str:
+    if value in {"gemini", "openai"}:
+        return value
+    return "openai_compatible"
+
+
+def _judge_configuration_missing(provider: str, base_url: str, api_key: str, model: str) -> bool:
+    if not model.strip():
+        return True
+    if provider in {"gemini", "openai"}:
+        return not api_key.strip()
+    return not base_url.strip()
+
+
+def _judge_configuration_message(provider: str, purpose: str) -> str:
+    if provider == "gemini":
+        return f"Configure a Gemini model and API key before {purpose}."
+    if provider == "openai":
+        return f"Configure an OpenAI model and project API key before {purpose}."
+    return f"Configure an OpenAI-compatible base URL and model before {purpose}."
+
+
+def _judge_caller(provider: str) -> JudgeCaller:
+    if provider == "gemini":
+        return call_gemini_judge
+    if provider == "openai":
+        return call_openai_judge
+    return call_openai_compatible_judge
 
 
 def parse_judge_response(response: str | dict[str, Any]) -> dict[str, Any]:
@@ -191,27 +248,19 @@ def run_llm_judge(
     caller: JudgeCaller | None = None,
 ) -> LlmJudgeResult:
     """Run the advisory judge and fail closed when it is unavailable or malformed."""
-    selected_provider = "gemini" if provider == "gemini" else "openai_compatible"
-    missing_configuration = not model.strip() or (
-        not api_key if selected_provider == "gemini" else not base_url.strip()
-    )
+    selected_provider = _provider(provider)
+    missing_configuration = _judge_configuration_missing(selected_provider, base_url, api_key, model)
     if caller is None and missing_configuration:
         return LlmJudgeResult(
             status="unavailable",
             provider=selected_provider,
             model=model.strip() or None,
-            summary=(
-                "Configure a Gemini model and API key before running the judge."
-                if selected_provider == "gemini"
-                else "Configure an OpenAI-compatible base URL and model before running the judge."
-            ),
+            summary=_judge_configuration_message(selected_provider, "running the judge"),
             errors=["judge_configuration_missing"],
         )
 
     prompt = build_judge_prompt(ocr_text, plan_a, plan_b)
-    selected_caller = caller or (
-        call_gemini_judge if selected_provider == "gemini" else call_openai_compatible_judge
-    )
+    selected_caller = caller or _judge_caller(selected_provider)
     try:
         response = selected_caller(
             prompt=prompt,
@@ -307,26 +356,18 @@ def run_four_case_judge(
     provider: str = "openai_compatible",
     caller: JudgeCaller | None = None,
 ) -> FourCaseJudgeResult:
-    selected_provider = "gemini" if provider == "gemini" else "openai_compatible"
-    missing_configuration = not model.strip() or (
-        not api_key if selected_provider == "gemini" else not base_url.strip()
-    )
+    selected_provider = _provider(provider)
+    missing_configuration = _judge_configuration_missing(selected_provider, base_url, api_key, model)
     if caller is None and missing_configuration:
         return FourCaseJudgeResult(
             status="unavailable",
             provider=selected_provider,
             model=model.strip() or None,
-            summary=(
-                "Configure a Gemini model and API key before ranking the four cases."
-                if selected_provider == "gemini"
-                else "Configure an OpenAI-compatible base URL and model before ranking the four cases."
-            ),
+            summary=_judge_configuration_message(selected_provider, "ranking the four cases"),
             errors=["judge_configuration_missing"],
         )
     prompt = build_four_case_judge_prompt(ocr_text, candidates)
-    selected_caller = caller or (
-        call_gemini_judge if selected_provider == "gemini" else call_openai_compatible_judge
-    )
+    selected_caller = caller or _judge_caller(selected_provider)
     try:
         response = selected_caller(
             prompt=prompt,

@@ -17,13 +17,13 @@ PROJECT_ROOT_PATH = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT_PATH))
 
-from invoice_parser.paths import DEFAULT_OUTPUT_DIR, DEFAULT_VECTOR_STORE_DIR, PROJECT_ROOT
+from invoice_parser.paths import DEFAULT_KB_PATH, DEFAULT_OUTPUT_DIR, DEFAULT_VECTOR_STORE_DIR
 from invoice_parser.schema import FIELDNAMES, NULL_VALUE
 from invoice_parser.providers import canonical_provider, provider_display_name
 from llm.agent.models import LlmRagContext, RagSnippet
 
 
-DEFAULT_KB = Path(os.getenv("RAG_KB_PATH", str(PROJECT_ROOT / "rag" / "knowledge_base.json")))
+DEFAULT_KB = DEFAULT_KB_PATH
 DEFAULT_VALIDATED_CSV = DEFAULT_OUTPUT_DIR / "invoice_structured_fields.csv"
 DEFAULT_VECTOR_INDEX = DEFAULT_VECTOR_STORE_DIR
 FIELD_NAMES = [

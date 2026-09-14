@@ -16,6 +16,8 @@ from typing import Any
 from invoice_parser.ocr_config import OCR_LANGUAGES, ocr_profile
 from invoice_parser.paths import (
     DATA_ROOT,
+    RUNTIME_ROOT,
+    DEFAULT_KB_PATH,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_PDF_DIR,
     DEFAULT_RAW_DIR,
@@ -111,12 +113,14 @@ def _writable_directory(path: Path) -> bool:
 def build_runtime_report(*, check_writes: bool = True) -> dict[str, Any]:
     directories = {
         "data_root": DATA_ROOT,
+        "runtime_root": RUNTIME_ROOT,
         "raw": DEFAULT_RAW_DIR,
         "pdf": DEFAULT_PDF_DIR,
         "text": DEFAULT_TEXT_DIR,
         "processed": DEFAULT_OUTPUT_DIR,
         "reports": DEFAULT_REPORTS_DIR,
         "vector_store": DEFAULT_VECTOR_STORE_DIR,
+        "knowledge_base_parent": DEFAULT_KB_PATH.parent,
     }
     writable = {
         name: _writable_directory(path) if check_writes else path.exists()

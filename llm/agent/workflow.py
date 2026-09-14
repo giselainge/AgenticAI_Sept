@@ -85,6 +85,7 @@ class AgentContext:
     output_dir: Path
     api_key: str
     model: str | None
+    llm_provider: str = "gemini"
     llm_runner: Callable[..., SecondPassResult] | None = None
     provider_id: str = "unknown"
     rag_snippets: list[RagSnippet] = field(default_factory=list)
@@ -287,6 +288,7 @@ class ExtractionAgent(PipelineAgent):
             source_file=context.source_name,
             api_key=context.api_key,
             model=context.model,
+            provider=context.llm_provider,
             output_dir=context.output_dir / "llm",
             rag_snippets=context.rag_snippets,
             kb_path=context.kb_path,
@@ -407,6 +409,7 @@ def run_agentic_ab_test(
     output_dir: str | Path = DEFAULT_AGENTIC_AB_DIR,
     api_key: str = "",
     model: str | None = None,
+    llm_provider: str = "gemini",
     llm_runner: Callable[..., SecondPassResult] | None = None,
 ) -> AgenticABResult:
     text_path = Path(text_file)
@@ -427,6 +430,7 @@ def run_agentic_ab_test(
         output_dir=output_path,
         api_key=api_key,
         model=model,
+        llm_provider=llm_provider,
         llm_runner=llm_runner,
     )
     trace = PlanBOrchestrator().run(context)
@@ -434,7 +438,7 @@ def run_agentic_ab_test(
     plan_a = _plan("Plan A", "OCR plus deterministic extraction", baseline_row, kb)
     plan_b = PlanResult(
         name="Plan B",
-        method="coded agent orchestration with provider RAG and optional Gemini PDF extraction",
+        method=f"coded agent orchestration with provider RAG and optional {llm_provider.title()} PDF extraction",
         row=context.working_row,
         validation_errors=context.validation_errors,
         route=context.route,

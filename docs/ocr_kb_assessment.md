@@ -14,8 +14,8 @@ The current evidence supports an overall **6.2/10** for the repository against t
 | Agentic behavior | 20 | 15 | Plan B has five typed, sequential agents, auditable traces, deterministic validation and routing, plus an independent optional judge. The local offline path produces no extraction improvement and has no autonomous feedback/revalidation loop. |
 | RAG and adaptive memory | 20 | 11 | Provider-scoped tips, OCR corrections, layouts, examples, feedback, validation history, FAISS, LlamaIndex and Torch are implemented. Storage is JSON/CSV rather than the required persistent SQL/NoSQL store, and the index is not automatically refreshed after feedback. |
 | HITL | 10 | 6 | Review, correction notes, approve/reject decisions and the five-prior-approval rule exist. Low model confidence is not consistently used for routing, and feedback does not automatically trigger extraction and validation again. |
-| Deployment and observability | 10 | 4 | Docker, Compose, health checks and ephemeral AWS definitions exist, but no current Docker/AWS execution evidence is available. Deployment is intentionally deferred. |
-| Code and documentation | 10 | 8 | The project uses `pyproject.toml` and `uv.lock`, has privacy boundaries and 79 passing tests. Some presentation claims remain stale. |
+| Deployment and observability | 10 | 4 | Docker, Compose, readiness fingerprints and ephemeral AWS definitions exist. The manual AWS flow transfers the locally tested image and exposes all three services, but no current Docker/AWS execution evidence is available. Deployment is intentionally deferred. |
+| Code and documentation | 10 | 8 | The project uses `pyproject.toml` and `uv.lock`, has privacy boundaries and 84 passing tests. Some presentation claims remain stale. |
 | **Total** | **100** | **62** | **6.2/10** |
 
 ## Four-option field-retrieval comparison
@@ -33,7 +33,7 @@ The local diagnostic processed 55 of 55 available OCR text files. Fifty-two were
 
 The offline Plan B changed zero fields across the 55 files because its Extraction Agent retained the deterministic result when no model was configured. Both measured options produced 119 validation errors in aggregate. Their routes were 52 manual-review decisions and 3 unsupported rejections.
 
-The raw diagnostic summary is stored locally under the ignored private-data tree at `data/data/data_processed/agentic_ab_tests/preprocessed_offline/preprocessed_field_retrieval_summary.json`.
+The raw diagnostic summary is stored locally under the ignored private-data tree at `data/data_processed/agentic_ab_tests/preprocessed_offline/preprocessed_field_retrieval_summary.json`.
 
 ## OCR faithfulness and quality: 6.5/10
 
@@ -64,7 +64,7 @@ The presentation is reasonably candid about unmeasured gains, missing SQL/NoSQL 
 
 - “semantic vector search” should be described as deterministic token-hash retrieval unless a real semantic embedding model is added;
 - any claim that feedback improves later local Gradio extraction needs qualification, because the effect currently depends on the optional LLM path and a manually refreshed vector index;
-- the test count is now 79, not 67;
+- the test count is now 84, not 67;
 - real invoice field accuracy remains unmeasured even though synthetic OCR smoke tests and the 55-file completeness diagnostic have run; and
 - draft PR/GitOps references should be removed because this private college project does not use that delivery process.
 

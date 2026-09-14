@@ -120,6 +120,7 @@ class SecondPassResult(BaseModel):
     """Runtime result returned by the LLM second-pass workflow."""
 
     used: bool = False
+    provider: Literal["gemini", "openai"] = "gemini"
     model: str | None = DEFAULT_MODEL
     raw_response: str = ""
     parsed: dict[str, Any] = Field(default_factory=dict)
@@ -149,7 +150,7 @@ class LlmJudgeResult(BaseModel):
     """Auditable recommendation from an LLM judge; it never replaces human review."""
 
     status: Literal["completed", "unavailable", "failed"]
-    provider: Literal["gemini", "openai_compatible"] | None = None
+    provider: Literal["gemini", "openai", "openai_compatible"] | None = None
     model: str | None = None
     evidence_scope: Literal["ocr_text"] = "ocr_text"
     preferred_plan: Literal["plan_a", "plan_b", "tie", "inconclusive"] = "inconclusive"
@@ -180,7 +181,7 @@ class FourCaseJudgeResult(BaseModel):
     """Advisory ranking of the four extraction configurations."""
 
     status: Literal["completed", "unavailable", "failed"]
-    provider: Literal["gemini", "openai_compatible"] | None = None
+    provider: Literal["gemini", "openai", "openai_compatible"] | None = None
     model: str | None = None
     evidence_scope: Literal["ocr_text"] = "ocr_text"
     best_case: Literal[
