@@ -12,6 +12,7 @@ from rag.adaptive_rag import (
     build_llm_rag_snippets,
     canonical_provider,
     load_kb,
+    record_validated_invoice,
     record_review_corrections,
     seed_from_validated_csv,
 )
@@ -69,6 +70,27 @@ def test_review_corrections_update_feedback_and_field_patterns(tmp_path: Path) -
     assert provider["field_correction_patterns"]["invoice_number"]["total_corrections"] == 1
     assert provider["field_correction_patterns"]["total_value"]["recent_examples"][0]["corrected_value"] == "10.00"
     assert provider["validation_history"][-1]["event"] == "human_review_corrections_recorded"
+
+
+def test_source_verified_invoice_is_saved_as_approved_provider_memory(tmp_path: Path) -> None:
+    kb_path = tmp_path / "knowledge_base.json"
+    row = {
+        "source_file": "water.pdf",
+        "provider_name": "EPAL",
+        "invoice_type": "water",
+        "invoice_number": "FT 123",
+        "invoice_date": "2026-09-14",
+        "total_value": "12.30",
+    }
+
+    saved = record_validated_invoice(row, "Checked against the source.", kb_path)
+    provider = load_kb(kb_path)["providers"]["epal"]
+    example = provider["previously_validated_invoices"][0]
+
+    assert saved["provider_id"] == "epal"
+    assert example["review_decision"] == "human_approved"
+    assert example["validated_fields"]["total_value"] == "12.30"
+    assert provider["validation_history"][-1]["event"] == "source_verified_invoice_saved"
 
 
 def test_extraction_context_includes_field_correction_patterns(tmp_path: Path) -> None:

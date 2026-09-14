@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -10,6 +11,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from invoice_parser.providers import canonical_provider
+from invoice_parser.schema import FIELDNAMES
+from invoice_parser.text_utils import fold_text, normalize_money, normalize_space
 from llm.agent.judge import run_four_case_judge
 from llm.agent.models import FourCaseJudgeResult, JudgeCaller
 from llm.agent.workflow import (
@@ -25,6 +28,13 @@ from scripts.extract_invoice_fields import read_ocr_body
 
 
 CASE_IDS = ("ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic")
+EVALUATED_FIELDS = tuple(
+    field
+    for field in FIELDNAMES
+    if field not in {"source_file", "ocr_text_file", "valid_invoice", "extraction_warnings"}
+)
+MONEY_FIELDS = {"subtotal_value", "total_vat", "total_value"}
+DATE_FIELDS = {"invoice_date", "payment_due_date", "consumption_start_date", "consumption_end_date"}
 
 
 class FourCaseCandidate(BaseModel):
@@ -47,6 +57,7 @@ class FourCaseEvaluation(BaseModel):
     cases: dict[str, FourCaseCandidate]
     judge: FourCaseJudgeResult | None = None
     human_evaluation: dict[str, Any] | None = None
+    human_field_evaluation: dict[str, Any] | None = None
     artifact_path: str | None = None
 
 
@@ -231,6 +242,70 @@ def record_four_case_verdict(
     result.human_evaluation = {
         "best_case": best_case,
         "reviewer_note": note.strip(),
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return _write(result, path)
+
+
+def _evaluation_value(field: str, value: Any) -> str:
+    text = normalize_space(str(value or ""))
+    if text.casefold() in {"", "null", "none", "nan", "<absent>"}:
+        return "null"
+    if field in MONEY_FIELDS:
+        normalized = normalize_money(text)
+        return normalized if normalized is not None else fold_text(text)
+    if field in DATE_FIELDS:
+        for pattern in (r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$", r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$"):
+            match = re.match(pattern, text)
+            if not match:
+                continue
+            parts = [int(part) for part in match.groups()]
+            year, month, day = parts if len(match.group(1)) == 4 else (parts[2], parts[1], parts[0])
+            try:
+                return datetime(year, month, day).date().isoformat()
+            except ValueError:
+                break
+    if field == "currency":
+        return text.upper()
+    return fold_text(text)
+
+
+def record_four_case_field_verdicts(
+    artifact_path: str | Path,
+    verified_values: dict[str, Any],
+) -> FourCaseEvaluation:
+    """Score all available candidates against values manually checked in the source."""
+    path = Path(artifact_path)
+    result = FourCaseEvaluation.model_validate_json(path.read_text(encoding="utf-8"))
+    verified = {
+        field: str(verified_values[field]).strip()
+        for field in EVALUATED_FIELDS
+        if field in verified_values and str(verified_values[field]).strip()
+    }
+    if not verified:
+        raise ValueError("Enter at least one source-verified field value before scoring.")
+
+    scores: dict[str, Any] = {}
+    for case_id, candidate in result.cases.items():
+        if candidate.status not in {"measured", "fallback"}:
+            scores[case_id] = {"status": candidate.status, "accuracy_percent": None, "correct": 0}
+            continue
+        matches = {
+            field: _evaluation_value(field, candidate.row.get(field)) == _evaluation_value(field, expected)
+            for field, expected in verified.items()
+        }
+        correct = sum(matches.values())
+        scores[case_id] = {
+            "status": candidate.status,
+            "accuracy_percent": round(correct / len(verified) * 100, 2),
+            "correct": correct,
+            "matches": matches,
+        }
+
+    result.human_field_evaluation = {
+        "verified_fields": verified,
+        "verified_field_count": len(verified),
+        "case_scores": scores,
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
     }
     return _write(result, path)

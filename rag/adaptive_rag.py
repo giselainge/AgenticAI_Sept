@@ -154,6 +154,70 @@ def seed_from_validated_csv(
     return kb
 
 
+def record_validated_invoice(
+    row: dict[str, Any],
+    note: str = "",
+    kb_path: str | Path = DEFAULT_KB,
+) -> dict[str, Any]:
+    """Store one explicitly source-verified invoice as local provider memory."""
+    provider_id = canonical_provider(
+        row.get("provider_name", ""),
+        " ".join(str(value) for value in row.values()),
+    )
+    if provider_id == "unknown":
+        raise ValueError("Identify the provider before saving this invoice to provider memory.")
+    invoice_type = str(row.get("invoice_type") or "")
+    if invoice_type not in {"electricity", "water", "natural gas", "telecom"}:
+        raise ValueError("Only supported utility or telecom invoices can be saved to provider memory.")
+
+    kb = load_kb(kb_path)
+    provider = ensure_provider(kb, provider_id, str(row.get("provider_name") or ""))
+    signature = row_signature(row)
+    entry = {
+        "signature": signature,
+        "source_file": row.get("source_file", ""),
+        "valid_invoice": "true",
+        "review_decision": "human_approved",
+        "validated_fields": non_null_fields(row),
+        "reviewer_note": note.strip(),
+        "added_at": now_iso(),
+    }
+    examples = provider.setdefault("previously_validated_invoices", [])
+    existing = next((item for item in examples if item.get("signature") == signature), None)
+    if existing is None:
+        examples.append(entry)
+    else:
+        existing.update(entry)
+
+    layout = summarize_layout(row)
+    layouts = provider.setdefault("known_invoice_layouts", [])
+    existing_layout = next((item for item in layouts if item.get("layout_id") == layout["layout_id"]), None)
+    if existing_layout is None:
+        layouts.append(layout)
+    else:
+        existing_layout["fields_seen"] = sorted(
+            set(existing_layout.get("fields_seen", [])) | set(layout.get("fields_seen", []))
+        )
+        existing_layout["recorded_at"] = layout["recorded_at"]
+
+    provider.setdefault("validation_history", []).append(
+        {
+            "source_file": row.get("source_file", ""),
+            "event": "source_verified_invoice_saved",
+            "signature": signature,
+            "note": note.strip(),
+            "recorded_at": now_iso(),
+        }
+    )
+    save_kb(kb, kb_path)
+    return {
+        "provider_id": provider_id,
+        "provider_name": provider.get("provider_name", provider_id),
+        "signature": signature,
+        "validated_field_count": len(entry["validated_fields"]),
+    }
+
+
 def record_review_corrections(
     row: dict[str, Any],
     changes: dict[str, tuple[str, str]],

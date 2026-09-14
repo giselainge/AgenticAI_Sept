@@ -110,6 +110,21 @@ def provider_memory_documents(kb: dict[str, Any]) -> list[Any]:
     for provider_id, provider in kb.get("providers", {}).items():
         provider_name = provider.get("provider_name") or provider_id.replace("_", " ").title()
 
+        for item in provider.get("previously_validated_invoices", []):
+            fields = sorted((item.get("validated_fields") or {}).keys())
+            documents.append(
+                make_document(
+                    text=(
+                        f"{provider_name} source-verified invoice example includes fields: "
+                        f"{', '.join(fields) or 'none'}."
+                    ),
+                    metadata={
+                        **_provider_metadata(provider_id, provider, "validated_example"),
+                        "signature": item.get("signature", ""),
+                    },
+                )
+            )
+
         for tip in provider.get("provider_specific_extraction_tips", []):
             documents.append(
                 make_document(
