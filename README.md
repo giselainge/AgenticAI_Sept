@@ -199,6 +199,10 @@ uv run python scripts\gradio_app.py
 
 Open [http://127.0.0.1:7860]. Upload an invoice PDF or image; the app runs the OCR stage automatically. The interface shows required-field retrieval percentages, a 19-field Plan A/Plan B comparison table, OCR and post-processing diagnostics, the five Plan B agent events, a local extraction audit log, the provider knowledge base, a FAISS index rebuild action, the optional judge, and a human verdict control.
 
+For scanned PDFs, OCRmyPDF is preferred when installed. Bare local environments can fall back to
+Poppler (`pdftoppm`) plus Tesseract, including the same bounded enhancement used for small image scans.
+Portuguese and English Tesseract language data are required for comparable Portuguese-invoice quality.
+
 Each A/B artifact records sanitized preprocessing metadata and stage decisions. It does not store the OCR text, model prompts, or API keys in the audit log. The structured plan rows still contain invoice fields and remain under the ignored local `data/` tree.
 
 Plan B model extraction is disabled by default. Without it, Plan B still runs classification, provider-memory retrieval, deterministic fallback extraction, validation, and review routing. Enable **Optional Plan B LLM extraction**, select Gemini or OpenAI, and provide a request-only key to run the stronger OCR + LLM + agent comparison. The uploaded invoice, OCR evidence, and retrieved provider context are sent to the selected provider only for that explicitly enabled run; the key is not written to the A/B artifact.
