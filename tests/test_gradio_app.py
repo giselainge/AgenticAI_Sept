@@ -87,26 +87,39 @@ def test_local_inspection_exposes_fields_postprocess_and_safe_audit_log(tmp_path
     assert artifact == state
 
 
-def test_retrieve_fields_button_always_enables_plan_b_llm(monkeypatch) -> None:
+def test_retrieve_fields_button_runs_complete_july_vs_agentic_pair(monkeypatch) -> None:
     captured = {}
 
-    def fake_run(uploaded_file, enabled, model, api_key, provider):
+    def fake_run(uploaded_file, model, api_key, provider):
         captured.update(
             uploaded_file=uploaded_file,
-            enabled=enabled,
             model=model,
             api_key=api_key,
             provider=provider,
         )
-        return ("ok",) * 11
+        plan_a = SimpleNamespace(completion=0.6842, model_dump=lambda: {"name": "Plan A (July)"})
+        plan_b = SimpleNamespace(completion=0.7895, model_dump=lambda: {"name": "Plan B (Agentic)"})
+        result = SimpleNamespace(
+            plan_a=plan_a,
+            plan_b=plan_b,
+            comparison={},
+            plan_b_trace=[],
+            audit_log=[],
+            artifact_path="local-result.json",
+        )
+        return result, "invoice.pdf", {}
 
-    monkeypatch.setattr(gradio_app, "run_local_inspection", fake_run)
+    monkeypatch.setattr(gradio_app, "_execute_july_vs_agentic", fake_run)
+    monkeypatch.setattr(gradio_app, "_run_summary", lambda _: {})
+    monkeypatch.setattr(gradio_app, "field_comparison_rows", lambda _: [])
+    monkeypatch.setattr(gradio_app, "_postprocess_summary", lambda _: {})
     result = gradio_app.retrieve_fields_with_llm("invoice.pdf", "model", "request-key", "openai")
 
-    assert result == ("ok",) * 11
+    assert "Completed July-vs-agentic" in result[0]
+    assert result[3]["name"] == "Plan A (July)"
+    assert result[4]["name"] == "Plan B (Agentic)"
     assert captured == {
         "uploaded_file": "invoice.pdf",
-        "enabled": True,
         "model": "model",
         "api_key": "request-key",
         "provider": "openai",

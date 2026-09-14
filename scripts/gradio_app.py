@@ -32,7 +32,14 @@ from llm.agent.four_case import (
     record_four_case_verdict,
     run_four_case_evaluation,
 )
-from llm.agent.workflow import AgenticABResult, judge_ab_artifact, record_ab_verdict, run_agentic_ab_test
+from llm.agent.workflow import (
+    AgenticABResult,
+    PlanResult,
+    compare_plans,
+    judge_ab_artifact,
+    record_ab_verdict,
+    run_agentic_ab_test,
+)
 from rag.adaptive_rag import DEFAULT_KB, load_kb, record_validated_invoice
 from scripts.extract_invoice_fields import read_ocr_body
 from scripts.july_extract_invoice_fields import extract_row as extract_july_row
@@ -329,6 +336,67 @@ def _execute_local_ab(
     return result, source_label, ocr
 
 
+def _plan_from_four_case(candidate: Any, name: str) -> PlanResult:
+    if candidate.status not in {"measured", "fallback"} or not candidate.row:
+        details = "; ".join(candidate.errors or [f"{candidate.label} did not produce a usable result."])
+        raise ValueError(details)
+    return PlanResult(
+        name=name,
+        method=candidate.method,
+        row=dict(candidate.row),
+        validation_errors=list(candidate.validation_errors),
+        route=candidate.route,
+        completion=round(float(candidate.fields_retrieved_percent or 0.0) / 100, 4),
+        llm_used=bool(candidate.llm_used),
+    )
+
+
+def _execute_july_vs_agentic(
+    uploaded_file: Any,
+    model: str,
+    api_key: str,
+    llm_provider: str,
+) -> tuple[AgenticABResult, str, dict[str, Any]]:
+    """Run the complete July OCR+LLM baseline against agentic OCR+LLM."""
+    text_path, pdf_path, source_label, ocr_result = _prepare_inputs(uploaded_file)
+    selected_provider = "openai" if llm_provider == "openai" else "gemini"
+    key_env = "OPENAI_API_KEY" if selected_provider == "openai" else "GEMINI_API_KEY"
+    model_env = "OPENAI_MODEL" if selected_provider == "openai" else "GEMINI_MODEL"
+    default_model = "gpt-5.6-terra" if selected_provider == "openai" else "gemini-3.5-flash"
+    selected_key = (api_key or os.getenv(key_env, "")).strip()
+    if not selected_key:
+        raise ValueError(f"Paste a {selected_provider.title()} API key to run the July-vs-agentic A/B test.")
+    selected_model = (model or os.getenv(model_env, default_model)).strip()
+
+    four = run_four_case_evaluation(
+        text_path,
+        pdf_file=pdf_path,
+        kb_path=DEFAULT_KB,
+        output_dir=DEFAULT_AGENTIC_AB_DIR / "four_case",
+        llm_provider=selected_provider,
+        llm_api_key=selected_key,
+        llm_model=selected_model,
+    )
+    plan_a = _plan_from_four_case(four.cases["ocr_llm"], "Plan A (July)")
+    plan_b = _plan_from_four_case(four.cases["ocr_llm_agentic"], "Plan B (Agentic)")
+    result = AgenticABResult(
+        generated_at=four.generated_at,
+        source_name=four.source_name,
+        plan_a=plan_a,
+        plan_b=plan_b,
+        comparison=compare_plans(plan_a, plan_b),
+        plan_b_trace=four.agent_trace,
+    )
+    ocr = _ocr_diagnostics(ocr_result)
+    result.preprocessing = ocr
+    result.audit_log = _audit_rows(result, ocr)
+    artifact = DEFAULT_AGENTIC_AB_DIR / f"{text_path.stem.removesuffix('_selected_text')}_july_vs_agentic.json"
+    result.artifact_path = str(artifact)
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(json.dumps(result.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
+    return result, source_label, ocr
+
+
 def run_local_ab(
     uploaded_file: Any,
     enable_plan_b_llm: bool = False,
@@ -395,13 +463,30 @@ def retrieve_fields_with_llm(
     plan_b_api_key: str = "",
     llm_provider: str = "openai",
 ) -> tuple[Any, ...]:
-    """Run the original field retrieval behavior through Plan B's extraction agent."""
-    return run_local_inspection(
-        uploaded_file,
-        True,
-        plan_b_model,
-        plan_b_api_key,
-        llm_provider,
+    """Compare the complete July OCR+LLM pipeline with agentic OCR+LLM."""
+    try:
+        result, source_label, ocr = _execute_july_vs_agentic(
+            uploaded_file, plan_b_model, plan_b_api_key, llm_provider
+        )
+    except Exception as exc:
+        return f"July-vs-agentic A/B test failed: {exc}", {}, [], {}, {}, {}, [], {}, [], "", ""
+    status = (
+        f"Completed July-vs-agentic A/B test locally for {source_label}. "
+        f"Plan A (July) retrieved {result.plan_a.completion * 100:.2f}%; "
+        f"Plan B (Agentic) retrieved {result.plan_b.completion * 100:.2f}%."
+    )
+    return (
+        status,
+        _run_summary(result),
+        field_comparison_rows(result),
+        result.plan_a.model_dump(),
+        result.plan_b.model_dump(),
+        result.comparison,
+        [event.model_dump() for event in result.plan_b_trace],
+        {"ocr": ocr, "post_processing": _postprocess_summary(result)},
+        _audit_table(result.audit_log),
+        result.artifact_path or "",
+        result.artifact_path or "",
     )
 
 
@@ -783,8 +868,8 @@ def build_demo() -> Any:
     with gr.Blocks(title="Agentic Invoice A/B Lab") as demo:
         gr.Markdown(
             "# Agentic Invoice A/B Lab\n"
-            "Runs on this computer. Plan A uses OCR and deterministic extraction. "
-            "Plan B uses the five-agent supervisor workflow and provider knowledge base. "
+            "Runs on this computer. The primary A/B test compares the complete July OCR + LLM baseline "
+            "with OCR + LLM inside the five-agent supervisor workflow and provider knowledge base. "
             "The supported categories are electricity, water, natural gas, and telecom; "
             "other documents are rejected. Plan B extraction and the independent judge call a model only "
             "when you explicitly enable the corresponding action."
@@ -803,9 +888,10 @@ def build_demo() -> Any:
             )
             with gr.Accordion("Retrieve fields with GPT / Gemini", open=True):
                 gr.Markdown(
-                    "This preserves the original model field-retrieval step and runs it as Plan B's "
-                    "Extraction Agent. It sends the enhanced invoice PDF, OCR evidence, and matching "
-                    "provider knowledge to the selected provider. Keys remain in memory for this request."
+                    "Plan A runs the original July OCR + direct LLM field-retrieval pipeline. Plan B uses "
+                    "the same OCR evidence and model inside the agent workflow with provider memory and "
+                    "validation. Both outputs use the same 19-field normalization and contamination checks. "
+                    "Keys remain in memory for this request."
                 )
                 plan_b_provider = gr.Dropdown(
                     choices=[("OpenAI", "openai"), ("Gemini", "gemini")],
@@ -814,7 +900,7 @@ def build_demo() -> Any:
                 )
                 plan_b_model = gr.Textbox(
                     value="",
-                    label="Plan B model (blank uses provider default)",
+                    label="A/B extraction model (blank uses provider default)",
                     placeholder="OpenAI: gpt-5.6-terra; Gemini: gemini-3.5-flash",
                 )
                 plan_b_api_key = gr.Textbox(label="Provider API key", type="password")
@@ -823,15 +909,15 @@ def build_demo() -> Any:
                     variant="primary",
                 )
             enable_plan_b_llm = gr.State(False)
-            run_button = gr.Button("Run OCR-only A/B test")
+            run_button = gr.Button("Run no-LLM rule ablations (diagnostic only)")
             status = gr.Markdown()
             run_summary = gr.JSON(label="Field retrieval and routing summary")
             field_table = gr.Dataframe(
                 headers=[
                     "Group",
                     "Field",
-                    "Plan A value",
-                    "Plan B value",
+                    "Plan A (July) value",
+                    "Plan B (Agentic) value",
                     "A retrieved",
                     "B retrieved",
                     "Same value",
@@ -843,8 +929,8 @@ def build_demo() -> Any:
             )
             with gr.Accordion("Raw plan outputs", open=False):
                 with gr.Row():
-                    plan_a = gr.JSON(label="Plan A")
-                    plan_b = gr.JSON(label="Plan B")
+                    plan_a = gr.JSON(label="Plan A (July)")
+                    plan_b = gr.JSON(label="Plan B (Agentic)")
                 comparison = gr.JSON(label="Comparison")
             with gr.Accordion("OCR, post-processing and extraction log", open=False):
                 processing_details = gr.JSON(label="OCR and post-processing details")
@@ -1013,10 +1099,10 @@ def build_demo() -> Any:
                         "Group",
                         "Field",
                         "Source-verified value",
-                        "OCR + rules",
-                        "OCR + LLM",
-                        "OCR + agentic",
-                        "OCR + LLM + agentic",
+                        "Ablation: July OCR + rules",
+                        "Plan A: July OCR + LLM",
+                        "Ablation: July OCR + agentic rules",
+                        "Plan B: July OCR + LLM + agents",
                         "Judge winner",
                         "Judge reason",
                     ],

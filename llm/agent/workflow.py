@@ -14,6 +14,7 @@ from typing import Any, Callable, Literal
 from pydantic import BaseModel, Field
 
 from invoice_parser.paths import DEFAULT_AGENTIC_AB_DIR
+from invoice_parser.postprocess import sanitize_invoice_row
 from invoice_parser.providers import canonical_provider
 from invoice_parser.schema import FIELDNAMES, NULL_VALUE
 from llm.agent.judge import run_llm_judge
@@ -172,7 +173,7 @@ def merge_invoice_rows(baseline: dict[str, Any], model_fields: dict[str, Any]) -
         if name not in model_fields or _is_missing(model_fields.get(name)):
             continue
         merged[name] = str(model_fields[name])
-    return merged
+    return sanitize_invoice_row(merged)[0]
 
 
 def count_prior_approved(kb: dict[str, Any], provider_id: str, current_row: dict[str, str]) -> int:
@@ -425,7 +426,7 @@ def run_agentic_ab_test(
     if not text_path.exists():
         raise FileNotFoundError(f"OCR text file does not exist: {text_path}")
     source_name, ocr_text = read_ocr_body(text_path)
-    baseline_row = baseline_extractor(text_path)
+    baseline_row, _ = sanitize_invoice_row(baseline_extractor(text_path))
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     context = AgentContext(

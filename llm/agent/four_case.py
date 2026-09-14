@@ -90,7 +90,7 @@ def _direct_llm_plan(
     provider_id = canonical_provider(normalized.get("provider_name", ""))
     approved = count_prior_approved(load_kb(kb_path), provider_id, normalized)
     return PlanResult(
-        name="OCR + LLM",
+        name="Plan A (July)",
         method=f"{provider.title()} PDF/OCR extraction without provider RAG or agent routing",
         row=normalized,
         validation_errors=errors,

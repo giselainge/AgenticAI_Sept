@@ -877,24 +877,31 @@ def cached_text_result(
 
 def update_review_flags(result: Layer6Result, quality: dict[str, Any]) -> None:
     warnings = list(result.warnings)
+    review_required = bool(result.errors)
 
     if result.errors:
         warnings.append("One or more extraction errors occurred.")
     if not result.selected_text.strip():
         warnings.append("No usable text was extracted.")
+        review_required = True
     if quality.get("score", 0.0) < MANUAL_REVIEW_THRESHOLD:
         warnings.append("Selected OCR quality score is below manual-review threshold.")
+        review_required = True
     if quality.get("character_count", 0) < MIN_TEXT_CHARS:
         warnings.append("Selected text is too short.")
+        review_required = True
     if quality.get("invoice_keyword_count", 0) == 0:
         warnings.append("No invoice keywords found in selected text.")
+        review_required = True
     if quality.get("money_count", 0) == 0:
         warnings.append("No money values found in selected text.")
+        review_required = True
     if quality.get("date_count", 0) == 0:
         warnings.append("No dates found in selected text.")
+        review_required = True
 
     result.warnings = sorted(set(warnings))
-    result.requires_manual_review = bool(result.warnings)
+    result.requires_manual_review = review_required
 
 
 def should_run_llm_second_pass(
