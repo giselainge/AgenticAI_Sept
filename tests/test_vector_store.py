@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from llm.agent.models import RagSnippet
 from rag.adaptive_rag import build_llm_rag_snippets
-from vector_store.base import VectorStoreDependencyError, _embedding_device, _load_vector_dependencies
+from vector_store.base import VectorStoreDependencyError, _load_vector_dependencies
 from vector_store.documents import provider_memory_documents
 
 
@@ -105,8 +105,6 @@ def test_vector_store_dependency_error_is_actionable(monkeypatch) -> None:
 
 
 def test_local_embedding_is_stable_and_uses_no_model_download() -> None:
-    import torch
-
     class FakeBaseEmbedding:
         def __init__(self, **values):
             for key, value in values.items():
@@ -114,24 +112,10 @@ def test_local_embedding_is_stable_and_uses_no_model_download() -> None:
 
     from vector_store.base import _embedding_class
 
-    embedding = _embedding_class(FakeBaseEmbedding, torch)(dimension=64, device="cpu")
+    embedding = _embedding_class(FakeBaseEmbedding)(dimension=64)
     first = embedding._get_text_embedding("EPAL water invoice total")
     second = embedding._get_query_embedding("EPAL water invoice total")
 
     assert first == second
     assert len(first) == 64
     assert abs(sum(value * value for value in first) - 1.0) < 1e-5
-
-
-def test_local_embedding_defaults_to_cpu_even_when_cuda_is_visible(monkeypatch) -> None:
-    class FakeCuda:
-        @staticmethod
-        def is_available() -> bool:
-            return True
-
-    class FakeTorch:
-        cuda = FakeCuda()
-
-    monkeypatch.delenv("TORCH_EMBEDDING_DEVICE", raising=False)
-
-    assert _embedding_device(FakeTorch()) == "cpu"

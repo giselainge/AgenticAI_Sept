@@ -34,7 +34,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     INVOICE_DATA_ROOT=/app/data \
     INVOICE_RUNTIME_ROOT=/app/runtime \
     RAG_DB_PATH=/app/runtime/knowledge_base.sqlite3 \
-    TORCH_EMBEDDING_DEVICE=cpu \
     VECTOR_STORE_DIR=/app/runtime/vector_store \
     OCR_LANGUAGES=por+eng \
     OCR_DPI=300 \

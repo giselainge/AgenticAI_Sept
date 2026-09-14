@@ -17,7 +17,6 @@ dependencies = [
     "pymupdf==1.27.2.3",
     "pytesseract==0.3.13",
     "python-dotenv==1.2.2",
-    "torch==2.13.0",
     "uvicorn==0.51.0",
 ]
 

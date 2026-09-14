@@ -370,7 +370,7 @@ The tests mock Gemini and OpenAI API calls and do not call either real API.
 - Some source/OCR text may contain encoding artifacts.
 - Deterministic extraction is regex/heuristic-based.
 - Gemini second pass requires API access, quota, and network availability.
-- Provider memory uses transactional local SQLite plus an optional FAISS/LlamaIndex index. Its deterministic Torch feature-hash embedding requires no model repository or model download. It defaults to CPU for consistent local/AWS behavior; set `TORCH_EMBEDDING_DEVICE=cuda` only on a compatible CUDA build.
+- Provider memory uses transactional local SQLite plus an optional FAISS/LlamaIndex index. Its deterministic standard-Python feature-hash embedding requires no model repository, model download, Torch, or GPU runtime.
 - Fresh clones do not contain invoice data; local invoice import or pipeline commands create the ignored `data/` tree.
 - Old timestamped Gemini artifacts may exist from earlier development runs.
 

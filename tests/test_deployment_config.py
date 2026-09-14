@@ -54,7 +54,7 @@ def test_compose_runs_api_and_dashboard_with_persistent_runtime_paths() -> None:
         assert "./data:/app/data" in service["volumes"]
         assert "./runtime:/app/runtime" in service["volumes"]
         assert service["environment"]["RAG_DB_PATH"] == "/app/runtime/knowledge_base.sqlite3"
-        assert service["environment"]["TORCH_EMBEDDING_DEVICE"] == "${TORCH_EMBEDDING_DEVICE:-cpu}"
+        assert "TORCH_EMBEDDING_DEVICE" not in service["environment"]
         assert "GEMINI_API_KEY" not in service["environment"]
         assert "JUDGE_API_KEY" not in service["environment"]
         assert service["environment"]["OCR_LANGUAGES"] == "${OCR_LANGUAGES:-por+eng}"

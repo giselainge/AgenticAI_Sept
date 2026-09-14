@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import math
 import os
 import re
 from pathlib import Path
@@ -33,7 +34,6 @@ class VectorStoreDependencyError(RuntimeError):
 def _load_vector_dependencies() -> dict[str, Any]:
     try:
         import faiss
-        import torch
         from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage
         from llama_index.core.embeddings import BaseEmbedding
         from llama_index.core.node_parser import SentenceSplitter
@@ -46,7 +46,6 @@ def _load_vector_dependencies() -> dict[str, Any]:
 
     return {
         "faiss": faiss,
-        "torch": torch,
         "BaseEmbedding": BaseEmbedding,
         "StorageContext": StorageContext,
         "VectorStoreIndex": VectorStoreIndex,
@@ -56,39 +55,26 @@ def _load_vector_dependencies() -> dict[str, Any]:
     }
 
 
-def _embedding_class(base_embedding: Any, torch_module: Any) -> type:
-    """Create a LlamaIndex embedding backed by deterministic local Torch operations."""
+def _embedding_class(base_embedding: Any) -> type:
+    """Create a deterministic local feature-hash embedding without model downloads."""
 
     class LocalHashEmbedding(base_embedding):
         dimension: int = EMBEDDING_DIMENSION
-        device: str = "cpu"
 
         @classmethod
         def class_name(cls) -> str:
             return "local_hash_embedding"
 
-        def _embed_on(self, text: str, device: str) -> list[float]:
-            vector = torch_module.zeros(self.dimension, dtype=torch_module.float32, device=device)
+        def _embed(self, text: str) -> list[float]:
+            vector = [0.0] * self.dimension
             tokens = re.findall(r"[\w]+", (text or "").casefold(), flags=re.UNICODE)
             for token in tokens:
                 digest = hashlib.blake2b(token.encode("utf-8"), digest_size=16).digest()
                 index = int.from_bytes(digest[:8], "little") % self.dimension
                 sign = 1.0 if digest[8] & 1 else -1.0
                 vector[index] += sign
-            norm = torch_module.linalg.vector_norm(vector)
-            if norm.item() > 0:
-                vector = vector / norm
-            return vector.detach().cpu().tolist()
-
-        def _embed(self, text: str) -> list[float]:
-            try:
-                return self._embed_on(text, self.device)
-            except RuntimeError:
-                if self.device == "cpu":
-                    raise
-                logger.warning("Torch CUDA embedding failed; retrying this index on CPU.")
-                object.__setattr__(self, "device", "cpu")
-                return self._embed_on(text, "cpu")
+            norm = math.sqrt(sum(value * value for value in vector))
+            return [value / norm for value in vector] if norm else vector
 
         def _get_query_embedding(self, query: str) -> list[float]:
             return self._embed(query)
@@ -106,19 +92,6 @@ def _load_kb(kb_path: str | Path) -> dict[str, Any]:
     from rag.adaptive_rag import load_kb
 
     return load_kb(kb_path)
-
-
-def _embedding_device(torch_module: Any) -> str:
-    requested = os.getenv("TORCH_EMBEDDING_DEVICE", "cpu").strip().casefold()
-    if requested == "auto":
-        return "cuda" if torch_module.cuda.is_available() else "cpu"
-    if requested == "cuda" and torch_module.cuda.is_available():
-        return "cuda"
-    if requested not in {"", "cpu", "cuda"}:
-        logger.warning("Unknown TORCH_EMBEDDING_DEVICE=%s; using CPU.", requested)
-    elif requested == "cuda":
-        logger.warning("CUDA embeddings requested but CUDA is unavailable; using CPU.")
-    return "cpu"
 
 
 def _index_exists(index_path: Path) -> bool:
@@ -140,11 +113,8 @@ def build_index(
         return _INDEX_CACHE
 
     deps = _load_vector_dependencies()
-    embedding_type = _embedding_class(deps["BaseEmbedding"], deps["torch"])
-    embed_model = embedding_type(
-        dimension=EMBEDDING_DIMENSION,
-        device=_embedding_device(deps["torch"]),
-    )
+    embedding_type = _embedding_class(deps["BaseEmbedding"])
+    embed_model = embedding_type(dimension=EMBEDDING_DIMENSION)
     index_settings = {
         "embed_model": embed_model,
         "transformations": [
