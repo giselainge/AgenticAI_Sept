@@ -756,9 +756,10 @@ def build_demo() -> Any:
             "their project membership by day 7 when access must end. Never share one user's key."
         )
         with gr.Tab("Plan A / Plan B"):
-            invoice = gr.File(
-                label="Invoice PDF or image",
+            invoice = gr.UploadButton(
+                "Upload invoice PDF or image",
                 file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"],
+                file_count="single",
                 type="filepath",
             )
             with gr.Accordion("Retrieve fields with GPT / Gemini", open=True):
@@ -922,9 +923,10 @@ def build_demo() -> Any:
                 "clicking **Run four cases** makes two extraction calls: one without provider RAG "
                 "and one inside the agentic workflow. The password field is request-only and is not saved."
             )
-            four_case_invoice = gr.File(
-                label="Invoice PDF or image",
+            four_case_invoice = gr.UploadButton(
+                "Upload invoice PDF or image",
                 file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"],
+                file_count="single",
                 type="filepath",
             )
             four_case_provider = gr.Dropdown(
