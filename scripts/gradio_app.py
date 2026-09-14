@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -24,11 +26,13 @@ from invoice_parser.paths import (
 from llm.agent.four_case import (
     FourCaseEvaluation,
     judge_four_case_artifact,
+    record_four_case_field_verdicts,
     record_four_case_verdict,
     run_four_case_evaluation,
 )
 from llm.agent.workflow import AgenticABResult, judge_ab_artifact, record_ab_verdict, run_agentic_ab_test
-from rag.adaptive_rag import DEFAULT_KB, load_kb
+from rag.adaptive_rag import DEFAULT_KB, load_kb, record_validated_invoice
+from scripts.extract_invoice_fields import read_ocr_body
 from scripts.ocr_text_extraction import SUPPORTED_EXTENSIONS, process_file
 
 
@@ -456,6 +460,80 @@ def _four_case_table(result: FourCaseEvaluation) -> list[list[Any]]:
     ]
 
 
+def _source_preview_pages(uploaded_file: Any) -> list[str]:
+    source = _uploaded_path(uploaded_file)
+    if source is None or not source.exists():
+        return []
+    if source.suffix.lower() != ".pdf":
+        return [str(source)]
+    renderer = shutil.which("pdftoppm")
+    if renderer is None:
+        return []
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
+    preview_dir = DEFAULT_AGENTIC_AB_DIR / "previews" / digest
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    existing = sorted(preview_dir.glob("page-*.jpg"))
+    if existing:
+        return [str(path) for path in existing]
+    completed = subprocess.run(
+        [renderer, "-jpeg", "-r", "120", str(source), str(preview_dir / "page")],
+        check=False,
+        capture_output=True,
+        timeout=120,
+    )
+    if completed.returncode != 0:
+        return []
+    return [str(path) for path in sorted(preview_dir.glob("page-*.jpg"))]
+
+
+def _table_records(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if hasattr(value, "to_dict"):
+        try:
+            return list(value.to_dict("records"))
+        except TypeError:
+            return []
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def _verified_values_from_table(value: Any) -> dict[str, str]:
+    verified: dict[str, str] = {}
+    for row in _table_records(value):
+        if isinstance(row, dict):
+            field_name = str(row.get("Field") or "").strip()
+            source_value = str(row.get("Source-verified value") or "").strip()
+        elif isinstance(row, (list, tuple)) and len(row) >= 3:
+            field_name = str(row[1] or "").strip()
+            source_value = str(row[2] or "").strip()
+        else:
+            continue
+        if field_name in REQUIRED_FIELDS and source_value:
+            verified[field_name] = source_value
+    return verified
+
+
+def _four_case_field_rows(
+    result: FourCaseEvaluation,
+    verified_values: dict[str, str] | None = None,
+) -> list[list[Any]]:
+    verified = verified_values or {}
+    judge_items = {
+        item.field: (item.winner, item.reason)
+        for item in (result.judge.field_decisions if result.judge else [])
+    }
+    rows: list[list[Any]] = []
+    for group, fields in FIELD_GROUPS.items():
+        for field_name in fields:
+            values = []
+            for case_id in ("ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic"):
+                case = result.cases[case_id]
+                values.append(case.row.get(field_name, "null") if case.row else f"({case.status})")
+            winner, reason = judge_items.get(field_name, ("not judged", ""))
+            rows.append([group, field_name, verified.get(field_name, ""), *values, winner, reason])
+    return rows
+
+
 def run_four_cases(
     uploaded_file: Any,
     model: str,
@@ -475,13 +553,21 @@ def run_four_cases(
             llm_model=model,
         )
     except Exception as exc:
-        return f"Four-case assessment failed: {exc}", [], {}, "", ""
+        return f"Four-case assessment failed: {exc}", [], [], [], {}, "", ""
     measured = sum(case.status == "measured" for case in result.cases.values())
     status = (
         f"Four-case artifact created locally for {source_label}. Measured cases: {measured}/4. "
         "Accuracy still requires the judge plus a human verdict."
     )
-    return status, _four_case_table(result), result.model_dump(), result.artifact_path or "", result.artifact_path or ""
+    return (
+        status,
+        _four_case_table(result),
+        _four_case_field_rows(result),
+        _source_preview_pages(uploaded_file),
+        result.model_dump(),
+        result.artifact_path or "",
+        result.artifact_path or "",
+    )
 
 
 def run_four_case_judge_ui(
@@ -492,9 +578,10 @@ def run_four_case_judge_ui(
     provider: str = "openai_compatible",
     extraction_api_key: str = "",
     extraction_provider: str = "gemini",
-) -> tuple[str, dict[str, Any]]:
+    field_rows: Any = None,
+) -> tuple[str, dict[str, Any], list[list[Any]]]:
     if not artifact_path:
-        return "Run the four cases before invoking the judge.", {}
+        return "Run the four cases before invoking the judge.", {}, []
     try:
         selected_provider = provider if provider in {"gemini", "openai"} else "openai_compatible"
         selected_model = (
@@ -517,15 +604,91 @@ def run_four_case_judge_ui(
             provider=selected_provider,
         )
     except Exception as exc:
-        return f"Four-case judge could not run: {exc}", {}
+        return f"Four-case judge could not run: {exc}", {}, []
     judge = result.judge
     if judge is None:
-        return "Four-case judge produced no result.", {}
+        return "Four-case judge produced no result.", {}, []
+    verified = _verified_values_from_table(field_rows)
     return (
         f"Judge status: {judge.status}; best case: {judge.best_case}; confidence: {judge.confidence}. "
         "Human verification is still required.",
         judge.model_dump(),
+        _four_case_field_rows(result, verified),
     )
+
+
+def score_four_case_fields_ui(artifact_path: str, field_rows: Any) -> tuple[str, dict[str, Any], list[list[Any]]]:
+    if not artifact_path:
+        return "Run the four cases before scoring fields.", {}, []
+    verified = _verified_values_from_table(field_rows)
+    try:
+        result = record_four_case_field_verdicts(artifact_path, verified)
+    except Exception as exc:
+        return f"Source verification could not be saved: {exc}", {}, []
+    evaluation = result.human_field_evaluation or {}
+    return (
+        f"Scored {evaluation.get('verified_field_count', 0)} source-verified fields across all available cases.",
+        evaluation,
+        _four_case_field_rows(result, verified),
+    )
+
+
+def save_verified_to_kb_ui(
+    artifact_path: str,
+    field_rows: Any,
+    selected_case: str,
+    note: str,
+) -> tuple[str, dict[str, Any]]:
+    if not artifact_path:
+        return "Run the four cases before saving provider memory.", {}
+    verified = _verified_values_from_table(field_rows)
+    if not verified:
+        return "Enter at least one source-verified value before saving provider memory.", {}
+    try:
+        result = record_four_case_field_verdicts(artifact_path, verified)
+        candidate = result.cases[selected_case]
+        if candidate.status not in {"measured", "fallback"}:
+            raise ValueError(f"{selected_case} has no usable extraction to review.")
+        reviewed_row = dict(candidate.row)
+        reviewed_row.update(
+            {field: "null" if value.casefold() in {"null", "none", "<absent>"} else value for field, value in verified.items()}
+        )
+        reviewed_row["source_file"] = result.source_name
+        reviewed_row["valid_invoice"] = "true"
+        saved = record_validated_invoice(reviewed_row, note, DEFAULT_KB)
+
+        from vector_store.base import build_index, retrieve_provider_memory_docs
+
+        build_index(kb_path=DEFAULT_KB, index_path=DEFAULT_VECTOR_STORE_DIR, force_rebuild=True)
+        text_path = Path(str(result.cases["ocr_rules"].row.get("ocr_text_file") or ""))
+        _, query_text = read_ocr_body(text_path) if text_path.exists() else ("", "")
+        hits = retrieve_provider_memory_docs(
+            query_text=query_text,
+            provider_hint=str(reviewed_row.get("provider_name") or ""),
+            invoice_type=str(reviewed_row.get("invoice_type") or ""),
+            top_k=10,
+            kb_path=DEFAULT_KB,
+            index_path=DEFAULT_VECTOR_STORE_DIR,
+        )
+        signature = saved["signature"]
+        searchable = any((hit.get("metadata") or {}).get("signature") == signature for hit in hits)
+        details = {
+            **saved,
+            "selected_case": selected_case,
+            "vector_index_rebuilt": True,
+            "retrieval_hits": len(hits),
+            "retrieved_sections": sorted(
+                {str((hit.get("metadata") or {}).get("memory_section") or "") for hit in hits}
+            ),
+            "saved_example_searchable": searchable,
+        }
+        status = (
+            "Reviewed invoice saved to local provider memory; FAISS index rebuilt; "
+            f"saved example searchable: {str(searchable).lower()}."
+        )
+        return status, details
+    except Exception as exc:
+        return f"Provider-memory verification failed: {exc}", {}
 
 
 def save_four_case_verdict(artifact_path: str, best_case: str, note: str) -> str:
@@ -783,6 +946,36 @@ def build_demo() -> Any:
                 interactive=False,
                 label="Four-case comparison",
             )
+            gr.Markdown(
+                "### Field-by-field source check\n"
+                "Inspect the original page and compare each of the 19 fields across all four scenarios. "
+                "Enter the exact source value in **Source-verified value**; enter `<absent>` when the source "
+                "does not contain that field."
+            )
+            with gr.Row():
+                four_source_preview = gr.Gallery(
+                    label="Original source pages",
+                    columns=1,
+                    height=720,
+                    preview=True,
+                )
+                four_field_table = gr.Dataframe(
+                    headers=[
+                        "Group",
+                        "Field",
+                        "Source-verified value",
+                        "OCR + rules",
+                        "OCR + LLM",
+                        "OCR + agentic",
+                        "OCR + LLM + agentic",
+                        "Judge winner",
+                        "Judge reason",
+                    ],
+                    datatype=["str"] * 9,
+                    interactive=True,
+                    type="array",
+                    label="Extracted fields compared with the source",
+                )
             with gr.Accordion("Candidate outputs", open=False):
                 four_case_result = gr.JSON(label="Four-case artifact contents")
                 four_case_artifact = gr.Textbox(label="Local result artifact", interactive=False)
@@ -793,6 +986,8 @@ def build_demo() -> Any:
                 outputs=[
                     four_case_status,
                     four_case_table,
+                    four_field_table,
+                    four_source_preview,
                     four_case_result,
                     four_case_artifact,
                     four_case_artifact_state,
@@ -841,9 +1036,20 @@ def build_demo() -> Any:
                         four_judge_provider,
                         four_case_key,
                         four_case_provider,
+                        four_field_table,
                     ],
-                    outputs=[four_judge_status, four_judge_result],
+                    outputs=[four_judge_status, four_judge_result, four_field_table],
                 )
+
+            gr.Markdown("### Human source verification")
+            four_score_button = gr.Button("Score all four cases against source-verified fields")
+            four_score_status = gr.Markdown()
+            four_score_result = gr.JSON(label="Measured field accuracy from human ground truth")
+            four_score_button.click(
+                score_four_case_fields_ui,
+                inputs=[four_case_artifact_state, four_field_table],
+                outputs=[four_score_status, four_score_result, four_field_table],
+            )
 
             gr.Markdown("### Human four-case verdict")
             four_verdict = gr.Dropdown(
@@ -865,6 +1071,27 @@ def build_demo() -> Any:
                 save_four_case_verdict,
                 inputs=[four_case_artifact_state, four_verdict, four_verdict_note],
                 outputs=four_verdict_status,
+            )
+
+            gr.Markdown("### Save reviewed result and verify provider-memory retrieval")
+            gr.Markdown(
+                "Choose the candidate to use as a base. Source-verified values override that candidate. "
+                "This explicit action saves the reviewed extraction locally, rebuilds FAISS, and queries "
+                "the index to prove the new provider example is searchable."
+            )
+            four_kb_case = gr.Dropdown(
+                choices=list(("ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic")),
+                value="ocr_llm_agentic",
+                label="Reviewed candidate",
+            )
+            four_kb_note = gr.Textbox(label="Reviewer / provider-memory note")
+            four_kb_button = gr.Button("Save reviewed fields to KB and test retrieval", variant="primary")
+            four_kb_status = gr.Markdown()
+            four_kb_result = gr.JSON(label="Knowledge-base upload and retrieval evidence")
+            four_kb_button.click(
+                save_verified_to_kb_ui,
+                inputs=[four_case_artifact_state, four_field_table, four_kb_case, four_kb_note],
+                outputs=[four_kb_status, four_kb_result],
             )
 
         with gr.Tab("Provider knowledge base"):

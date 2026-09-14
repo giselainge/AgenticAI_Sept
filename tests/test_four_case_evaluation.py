@@ -3,6 +3,7 @@ from pathlib import Path
 
 from llm.agent.four_case import (
     judge_four_case_artifact,
+    record_four_case_field_verdicts,
     record_four_case_verdict,
     run_four_case_evaluation,
 )
@@ -91,3 +92,28 @@ def test_four_case_judge_and_human_verdict_remain_separate(tmp_path: Path) -> No
     assert [item.field for item in judged.judge.field_decisions] == ["total_value"]
     assert reviewed.human_evaluation and reviewed.human_evaluation["best_case"] == "tie"
     assert "request-only-secret" not in artifact_text
+
+
+def test_four_case_fields_are_scored_against_human_source_values(tmp_path: Path) -> None:
+    text_path = _invoice(tmp_path / "water.txt")
+    result = run_four_case_evaluation(
+        text_path,
+        pdf_file=None,
+        kb_path=tmp_path / "kb.json",
+        output_dir=tmp_path / "four",
+    )
+
+    scored = record_four_case_field_verdicts(
+        result.artifact_path or "",
+        {
+            "invoice_type": "water",
+            "invoice_number": "FT 2026/123",
+            "total_value": "12,30 EUR",
+            "buyer_vat_number": "<absent>",
+        },
+    )
+
+    evaluation = scored.human_field_evaluation or {}
+    assert evaluation["verified_field_count"] == 4
+    assert evaluation["case_scores"]["ocr_rules"]["accuracy_percent"] == 100.0
+    assert evaluation["case_scores"]["ocr_llm"]["accuracy_percent"] is None
