@@ -25,7 +25,10 @@ DEFAULT_REPORTS_DIR = DEFAULT_OUTPUT_DIR / "reports"
 DEFAULT_LLM_SECOND_PASS_DIR = DEFAULT_OUTPUT_DIR / "llm_second_pass"
 DEFAULT_AGENTIC_AB_DIR = DEFAULT_OUTPUT_DIR / "agentic_ab_tests"
 DEFAULT_KB_PATH = Path(
-    os.getenv("RAG_KB_PATH", str(RUNTIME_ROOT / "knowledge_base.json"))
+    os.getenv(
+        "RAG_DB_PATH",
+        os.getenv("RAG_KB_PATH", str(RUNTIME_ROOT / "knowledge_base.sqlite3")),
+    )
 ).expanduser()
 DEFAULT_VECTOR_STORE_DIR = Path(
     os.getenv("VECTOR_STORE_DIR", str(RUNTIME_ROOT / "vector_store"))

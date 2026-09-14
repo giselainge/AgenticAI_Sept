@@ -18,9 +18,11 @@ if str(PROJECT_ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT_PATH))
 
 from invoice_parser.paths import DEFAULT_KB_PATH, DEFAULT_OUTPUT_DIR, DEFAULT_VECTOR_STORE_DIR
+from invoice_parser.postprocess import sanitize_invoice_row
 from invoice_parser.schema import FIELDNAMES, NULL_VALUE
 from invoice_parser.providers import canonical_provider, provider_display_name
 from llm.agent.models import LlmRagContext, RagSnippet
+from rag.sqlite_store import is_sqlite_path, load_kb_database, save_kb_database
 
 
 DEFAULT_KB = DEFAULT_KB_PATH
@@ -60,6 +62,7 @@ def ensure_provider(kb: dict[str, Any], provider_id: str, provider_name: str | N
             "provider_specific_extraction_tips": [],
             "common_ocr_corrections": {},
             "known_invoice_layouts": [],
+            "observed_invoices": [],
             "previously_validated_invoices": [],
             "human_reviewer_feedback": [],
             "field_correction_patterns": {},
@@ -72,6 +75,7 @@ def ensure_provider(kb: dict[str, Any], provider_id: str, provider_name: str | N
     provider.setdefault("provider_specific_extraction_tips", [])
     provider.setdefault("common_ocr_corrections", {})
     provider.setdefault("known_invoice_layouts", [])
+    provider.setdefault("observed_invoices", [])
     provider.setdefault("previously_validated_invoices", [])
     provider.setdefault("human_reviewer_feedback", [])
     provider.setdefault("field_correction_patterns", {})
@@ -85,6 +89,8 @@ def ensure_provider(kb: dict[str, Any], provider_id: str, provider_name: str | N
 
 def load_kb(kb_path: str | Path = DEFAULT_KB) -> dict[str, Any]:
     path = Path(kb_path)
+    if is_sqlite_path(path):
+        return load_kb_database(path)
     if not path.exists():
         return empty_kb()
     return json.loads(path.read_text(encoding="utf-8"))
@@ -92,6 +98,9 @@ def load_kb(kb_path: str | Path = DEFAULT_KB) -> dict[str, Any]:
 
 def save_kb(kb: dict[str, Any], kb_path: str | Path = DEFAULT_KB) -> None:
     path = Path(kb_path)
+    if is_sqlite_path(path):
+        save_kb_database(kb, path)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(kb, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -122,28 +131,39 @@ def summarize_layout(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def seed_from_validated_csv(
+def seed_from_extracted_csv(
     csv_path: str | Path = DEFAULT_VALIDATED_CSV,
     kb_path: str | Path = DEFAULT_KB,
 ) -> dict[str, Any]:
+    """Seed provider/layout observations without treating extraction as approval."""
     path = Path(csv_path)
     if not path.exists():
         raise FileNotFoundError(f"Validated invoice CSV does not exist: {path}")
 
     kb = load_kb(kb_path)
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        for row in csv.DictReader(handle):
+        for raw_row in csv.DictReader(handle):
+            row, _ = sanitize_invoice_row(raw_row)
             provider_id = canonical_provider(row.get("provider_name", ""), " ".join(row.values()))
+            if provider_id == "unknown" or row.get("invoice_type") not in {
+                "electricity",
+                "water",
+                "natural gas",
+                "telecom",
+            }:
+                continue
             provider = ensure_provider(kb, provider_id, row.get("provider_name"))
             signature = row_signature(row)
             entry = {
                 "signature": signature,
                 "source_file": row.get("source_file", ""),
+                "invoice_type": row.get("invoice_type", NULL_VALUE),
                 "valid_invoice": row.get("valid_invoice", NULL_VALUE),
-                "validated_fields": non_null_fields(row),
+                "review_status": "unreviewed",
+                "observed_fields": sorted(non_null_fields(row).keys()),
                 "added_at": now_iso(),
             }
-            examples = provider.setdefault("previously_validated_invoices", [])
+            examples = provider.setdefault("observed_invoices", [])
             if not any(item.get("signature") == signature for item in examples):
                 examples.append(entry)
             layout = summarize_layout(row)
@@ -152,6 +172,24 @@ def seed_from_validated_csv(
                 layouts.append(layout)
     save_kb(kb, kb_path)
     return kb
+
+
+def seed_from_validated_csv(
+    csv_path: str | Path = DEFAULT_VALIDATED_CSV,
+    kb_path: str | Path = DEFAULT_KB,
+) -> dict[str, Any]:
+    """Backward-compatible command name for unreviewed extraction seeding."""
+    return seed_from_extracted_csv(csv_path, kb_path)
+
+
+def ensure_seeded_kb(
+    csv_path: str | Path = DEFAULT_VALIDATED_CSV,
+    kb_path: str | Path = DEFAULT_KB,
+) -> dict[str, Any]:
+    kb = load_kb(kb_path)
+    if kb.get("providers") or not Path(csv_path).exists():
+        return kb
+    return seed_from_extracted_csv(csv_path, kb_path)
 
 
 def record_validated_invoice(
@@ -316,6 +354,7 @@ def build_extraction_context(
                 "provider_specific_extraction_tips": provider.get("provider_specific_extraction_tips", []),
                 "common_ocr_corrections": provider.get("common_ocr_corrections", {}),
                 "known_invoice_layouts": provider.get("known_invoice_layouts", []),
+                "observed_examples": provider.get("observed_invoices", []),
                 "validated_examples": provider.get("previously_validated_invoices", []),
                 "human_reviewer_feedback": provider.get("human_reviewer_feedback", []),
                 "field_correction_patterns": provider.get("field_correction_patterns", {}),
