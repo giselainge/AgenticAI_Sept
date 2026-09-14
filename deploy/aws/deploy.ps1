@@ -3,7 +3,7 @@ param(
     [string]$Profile = "billing-assessment",
     [string]$Region = "eu-west-1",
     [string]$StackName = "billing-assessment",
-    [ValidateRange(1, 12)][int]$Hours = 4,
+    [ValidateRange(1, 12)][int]$Hours = 3,
     [ValidateSet("t3.large", "t3.xlarge")][string]$InstanceType = "t3.large",
     [string]$AllowedCidr = "",
     [ValidatePattern("^[a-z0-9][a-z0-9._/-]*(?::[a-zA-Z0-9][a-zA-Z0-9._-]*)?$")]

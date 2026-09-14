@@ -124,7 +124,7 @@ def test_aws_deployment_uses_billing_assessment_name() -> None:
     assert all('[string]$Profile = "billing-assessment"' in script for script in deployment_scripts)
     assert all('[string]$StackName = "billing-assessment"' in script for script in deployment_scripts)
     assert all("agentic-invoice-demo" not in script for script in deployment_scripts)
-    assert '[ValidateRange(1, 12)][int]$Hours = 4' in deployment_scripts[0]
+    assert '[ValidateRange(1, 12)][int]$Hours = 3' in deployment_scripts[0]
 
 
 def test_local_parity_script_builds_and_checks_the_same_image() -> None:

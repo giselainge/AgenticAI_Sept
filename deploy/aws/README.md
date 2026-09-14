@@ -63,12 +63,12 @@ From the project root:
 
 The command builds `agentic-ai-billing-agent:local`, starts all three services, verifies their local endpoints, and prints the image ID and OCR quality fingerprint. Test OCR + rules and the Gemini-enabled cases in Gradio before continuing. Stop the containers with `.\deploy\local.ps1 -Down` when desired; the image remains available for the AWS transfer.
 
-## Deploy the tested image for four hours
+## Deploy the tested image for three hours
 
 From the project root:
 
 ```powershell
-.\deploy\aws\deploy.ps1 -Profile billing-assessment -Region eu-west-1 -Hours 4
+.\deploy\aws\deploy.ps1 -Profile billing-assessment -Region eu-west-1 -Hours 3
 ```
 
 The script:
