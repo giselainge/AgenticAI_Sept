@@ -1,4 +1,4 @@
-"""Four-case OCR/LLM/agentic experiment with an independent advisory judge."""
+"""Source-verifiable July-vs-agentic A/B experiment and advisory judge."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from invoice_parser.postprocess import sanitize_invoice_row
 from invoice_parser.providers import canonical_provider
 from invoice_parser.schema import FIELDNAMES
 from invoice_parser.text_utils import fold_text, normalize_money, normalize_space
@@ -30,7 +31,7 @@ from scripts.extract_invoice_fields import read_ocr_body
 from scripts.july_extract_invoice_fields import extract_row as extract_july_row
 
 
-CASE_IDS = ("ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic")
+CASE_IDS = ("ocr_llm", "ocr_llm_agentic")
 EVALUATED_FIELDS = tuple(
     field
     for field in FIELDNAMES
@@ -41,7 +42,7 @@ DATE_FIELDS = {"invoice_date", "payment_due_date", "consumption_start_date", "co
 
 
 class FourCaseCandidate(BaseModel):
-    case_id: Literal["ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic"]
+    case_id: Literal["ocr_llm", "ocr_llm_agentic"]
     label: str
     status: Literal["measured", "unavailable", "failed", "fallback"]
     method: str
@@ -54,7 +55,7 @@ class FourCaseCandidate(BaseModel):
 
 
 class FourCaseEvaluation(BaseModel):
-    schema_version: int = 2
+    schema_version: int = 3
     generated_at: str
     source_name: str
     cases: dict[str, FourCaseCandidate]
@@ -124,26 +125,15 @@ def run_four_case_evaluation(
     source_name, ocr_text = read_ocr_body(text_path)
     output = Path(output_dir)
 
-    offline = run_agentic_ab_test(
-        text_path,
-        pdf_file=pdf_path,
-        kb_path=kb_path,
-        output_dir=output / "offline",
-        api_key="",
-        baseline_extractor=extract_july_row,
-        plan_a_method="Frozen July OCR plus deterministic extraction",
-    )
-    cases: dict[str, FourCaseCandidate] = {
-        "ocr_rules": _candidate("ocr_rules", "Ablation: July OCR + rules", offline.plan_a),
-        "ocr_agentic": _candidate("ocr_agentic", "Ablation: July OCR + agentic rules", offline.plan_b),
-    }
+    baseline_row, _ = sanitize_invoice_row(extract_july_row(text_path))
+    cases: dict[str, FourCaseCandidate] = {}
 
     selected_provider = "openai" if llm_provider == "openai" else "gemini"
     selected_key = gemini_api_key if llm_api_key is None else llm_api_key
     selected_model = llm_model or (
         "gpt-5.6-terra" if selected_provider == "openai" else gemini_model
     )
-    agent_trace = offline.plan_b_trace
+    agent_trace: list[AgentEvent] = []
     if not selected_key or pdf_path is None or not pdf_path.exists():
         reason = f"A PDF and explicitly supplied {selected_provider.title()} API key are required."
         cases["ocr_llm"] = FourCaseCandidate(
@@ -151,6 +141,7 @@ def run_four_case_evaluation(
             label="Plan A: July OCR + LLM",
             status="unavailable",
             method=f"{selected_provider.title()} PDF/OCR extraction without agentic RAG",
+            row={"ocr_text_file": str(text_path)},
             errors=[reason],
         )
         cases["ocr_llm_agentic"] = FourCaseCandidate(
@@ -158,6 +149,7 @@ def run_four_case_evaluation(
             label="Plan B: July OCR + LLM + agentic workflow",
             status="unavailable",
             method=f"Plan B supervisor with provider RAG and {selected_provider.title()} extraction",
+            row={"ocr_text_file": str(text_path)},
             errors=[reason],
         )
     else:
@@ -166,8 +158,8 @@ def run_four_case_evaluation(
         direct = second_pass_extract(
             ocr_text=ocr_text,
             pdf_file=pdf_path,
-            provider_name=offline.plan_a.row.get("provider_name"),
-            invoice_type=offline.plan_a.row.get("invoice_type"),
+            provider_name=baseline_row.get("provider_name"),
+            invoice_type=baseline_row.get("invoice_type"),
             source_file=source_name,
             api_key=selected_key,
             model=selected_model,
@@ -178,7 +170,7 @@ def run_four_case_evaluation(
         )
         if direct.used and not direct.errors:
             direct_plan = _direct_llm_plan(
-                offline.plan_a.row,
+                baseline_row,
                 direct.parsed,
                 Path(kb_path),
                 selected_provider,
@@ -220,7 +212,7 @@ def run_four_case_evaluation(
         cases=ordered_cases,
         agent_trace=agent_trace,
     )
-    artifact = output / f"{text_path.stem.removesuffix('_selected_text')}_four_case.json"
+    artifact = output / f"{text_path.stem.removesuffix('_selected_text')}_ab_source_evaluation.json"
     return _write(result, artifact)
 
 
@@ -235,9 +227,17 @@ def judge_four_case_artifact(
 ) -> FourCaseEvaluation:
     path = Path(artifact_path)
     result = FourCaseEvaluation.model_validate_json(path.read_text(encoding="utf-8"))
-    text_path = Path(result.cases["ocr_rules"].row.get("ocr_text_file", ""))
+    text_path = next(
+        (
+            Path(candidate.row.get("ocr_text_file", ""))
+            for case_id in CASE_IDS
+            if (candidate := result.cases.get(case_id)) is not None
+            and candidate.row.get("ocr_text_file")
+        ),
+        Path(),
+    )
     if not text_path.exists() or not text_path.is_file():
-        raise FileNotFoundError("The OCR evidence file recorded by the four-case run is unavailable.")
+        raise FileNotFoundError("The OCR evidence file recorded by the A/B run is unavailable.")
     _, ocr_text = read_ocr_body(text_path)
     result.judge = run_four_case_judge(
         ocr_text=ocr_text,
@@ -253,9 +253,7 @@ def judge_four_case_artifact(
 
 def record_four_case_verdict(
     artifact_path: str | Path,
-    best_case: Literal[
-        "ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic", "tie", "inconclusive"
-    ],
+    best_case: Literal["ocr_llm", "ocr_llm_agentic", "tie", "inconclusive"],
     note: str = "",
 ) -> FourCaseEvaluation:
     path = Path(artifact_path)
