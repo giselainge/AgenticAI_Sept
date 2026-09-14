@@ -140,6 +140,10 @@ REPORTS_DIR = PROCESSED_DIR / "reports"
 
 def configure_local_ocr_environment() -> None:
     """Make freshly installed local OCR tools visible to this Python process."""
+    project_tessdata = PROJECT_ROOT / "runtime" / "tessdata"
+    if (project_tessdata / "por.traineddata").exists() and not os.environ.get("TESSDATA_PREFIX"):
+        os.environ["TESSDATA_PREFIX"] = str(project_tessdata)
+
     program_files = Path(os.environ.get("ProgramFiles", "C:/Program Files"))
     candidate_path_dirs = [
         Path.home() / "AppData" / "Local" / "Programs" / "Tesseract-OCR",
