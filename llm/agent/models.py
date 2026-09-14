@@ -79,7 +79,7 @@ class GeminiExtractionPayload(BaseModel):
 
 
 class NormalizedInvoiceExtraction(BaseModel):
-    """Normalized structured output saved as the Gemini second-pass artifact."""
+    """Normalized structured output saved as an LLM second-pass artifact."""
 
     source_file: str = NULL_VALUE
     ocr_text_file: str = NULL_VALUE
@@ -132,7 +132,7 @@ class SecondPassResult(BaseModel):
 
 
 class SecondPassArtifactPaths(BaseModel):
-    """Stable artifact filenames for one PDF second-pass run."""
+    """Stable provider-specific artifact filenames for one PDF second-pass run."""
 
     raw_response_path: Path
     normalized_output_path: Path

@@ -563,6 +563,11 @@ def build_demo() -> Any:
             "other documents are rejected. Plan B extraction and the independent judge call a model only "
             "when you explicitly enable the corresponding action."
         )
+        gr.Markdown(
+            "**Temporary OpenAI access:** invite each tester to the AgenticBilling API project, let each "
+            "tester create their own restricted project key with an expiry of **7 days or less**, and remove "
+            "their project membership by day 7 when access must end. Never share one user's key."
+        )
         with gr.Tab("Plan A / Plan B"):
             invoice = gr.File(
                 label="Invoice PDF or image",

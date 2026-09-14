@@ -14,7 +14,7 @@ flowchart LR
 
     KB["Provider RAG memory"] --> A2
     A2 -->|"retrieved guidance"| A3
-    Gemini["Gemini PDF model"] --> A3
+    Model["Selected PDF model"] --> A3
 
     A5 --> Reject["Reject unsupported"]
     A5 --> Human["Manual review"]
@@ -35,7 +35,7 @@ The supervisor is [`PlanBOrchestrator`](llm/agent/workflow.py). It runs the agen
 | --- | --- | --- |
 | [`ClassificationAgent`](llm/agent/workflow.py) | Classifies the document as electricity, water, natural gas, telecom, or unsupported. It stops unsupported documents from qualifying as valid invoices. | Deterministic rules agent |
 | [`ProviderMemoryAgent`](llm/agent/workflow.py) | Identifies the supplier, retrieves only that provider's RAG knowledge, and supplies tips, layout knowledge, OCR corrections, and reviewer feedback. | Retrieval/tool agent |
-| [`ExtractionAgent`](llm/agent/workflow.py) | Sends the PDF, OCR text, classification hint, and RAG context to Gemini. If Gemini or the PDF is unavailable, it records the failure and keeps deterministic extraction. | LLM tool-using agent |
+| [`ExtractionAgent`](llm/agent/workflow.py) | Sends the PDF, OCR text, classification hint, and RAG context to the selected Gemini or OpenAI provider. If the model or PDF is unavailable, it records the failure and keeps deterministic extraction. | LLM tool-using agent |
 | [`ValidationAgent`](llm/agent/workflow.py) | Checks required fields, real calendar dates, date ordering, finite monetary values, and `subtotal + VAT ≈ total`. | Deterministic critic agent |
 | [`ReviewRoutingAgent`](llm/agent/workflow.py) | Chooses unsupported rejection, manual review, or automatic-approval eligibility. It requires five distinct prior approved invoices for automation. | Policy/router agent |
 
@@ -70,7 +70,7 @@ The judge supports three connectors. **Gemini** needs a model name plus a Gemini
 
 ## Local Gradio test interface
 
-Run `uv run python scripts\gradio_app.py` and open `http://127.0.0.1:7860`. The interface accepts an invoice PDF or image, runs the built-in OCR pipeline, shows retrieval percentages and all 19 required fields side by side, exposes OCR/post-processing diagnostics and a sanitized stage log, shows the five-agent trace, exposes the provider knowledge base and local FAISS rebuild action, and records the human accuracy verdict in the A/B artifact. Plan B Gemini extraction is disabled by default and requires an explicit checkbox plus a request-only API key. The judge makes a separate external call only after the user configures an endpoint and clicks **Run LLM judge**; its field decisions are added to the comparison table. The server rejects non-loopback host arguments.
+Run `uv run python scripts\gradio_app.py` and open `http://127.0.0.1:7860`. The interface accepts an invoice PDF or image, runs the built-in OCR pipeline, shows retrieval percentages and all 19 required fields side by side, exposes OCR/post-processing diagnostics and a sanitized stage log, shows the five-agent trace, exposes the provider knowledge base and local FAISS rebuild action, and records the human accuracy verdict in the A/B artifact. Plan B LLM extraction is disabled by default and requires an explicit checkbox plus a request-only Gemini or OpenAI key. The judge makes a separate external call only after the user selects it and clicks **Run LLM judge**; its field decisions are added to the comparison table. The server rejects non-loopback host arguments.
 
 The **Four-case assessment** tab keeps these configurations distinct:
 

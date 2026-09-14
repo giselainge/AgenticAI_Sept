@@ -15,7 +15,7 @@ The current evidence supports an overall **6.2/10** for the repository against t
 | RAG and adaptive memory | 20 | 11 | Provider-scoped tips, OCR corrections, layouts, examples, feedback, validation history, FAISS, LlamaIndex and Torch are implemented. Storage is JSON/CSV rather than the required persistent SQL/NoSQL store, and the index is not automatically refreshed after feedback. |
 | HITL | 10 | 6 | Review, correction notes, approve/reject decisions and the five-prior-approval rule exist. Low model confidence is not consistently used for routing, and feedback does not automatically trigger extraction and validation again. |
 | Deployment and observability | 10 | 4 | Docker, Compose, readiness fingerprints and ephemeral AWS definitions exist. The manual AWS flow transfers the locally tested image and exposes all three services, but no current Docker/AWS execution evidence is available. Deployment is intentionally deferred. |
-| Code and documentation | 10 | 8 | The project uses `pyproject.toml` and `uv.lock`, has privacy boundaries and 84 passing tests. Some presentation claims remain stale. |
+| Code and documentation | 10 | 8 | The project uses `pyproject.toml` and `uv.lock`, has privacy boundaries and 88 passing tests. Some presentation claims remain stale. |
 | **Total** | **100** | **62** | **6.2/10** |
 
 ## Four-option field-retrieval comparison
@@ -56,7 +56,7 @@ The provider-memory data model covers the assessment's requested knowledge types
 
 The current vector representation is deterministic hashed token retrieval. FAISS, LlamaIndex and Torch are genuinely used, but calling it semantic embedding search overstates its capability because no semantic embedding model is present. The persisted JSON memory and CSV review store also do not satisfy the assessment's explicit SQL/NoSQL persistence requirement. Writes are not transactional, concurrent updates are not protected, and vector index freshness is not tied to memory updates.
 
-The Gradio server provides upload, built-in OCR, Plan A/Plan B results, a separate four-case comparison, agent trace, human verdict, provider-memory inspection and index rebuilding. Plan B Gemini extraction is opt-in through a request-only password field. The independent LLM judge is also opt-in and advisory. The FastAPI service currently exposes health and root routes only; it is not yet a functional OCR or knowledge-base API.
+The Gradio server provides upload, built-in OCR, Plan A/Plan B results, a separate four-case comparison, agent trace, human verdict, provider-memory inspection and index rebuilding. Plan B Gemini or OpenAI extraction is opt-in through a request-only password field. The independent LLM judge is also opt-in and advisory. The FastAPI service currently exposes health and root routes only; it is not yet a functional OCR or knowledge-base API.
 
 ## Presentation faithfulness: 6.5/10
 
@@ -64,7 +64,7 @@ The presentation is reasonably candid about unmeasured gains, missing SQL/NoSQL 
 
 - “semantic vector search” should be described as deterministic token-hash retrieval unless a real semantic embedding model is added;
 - any claim that feedback improves later local Gradio extraction needs qualification, because the effect currently depends on the optional LLM path and a manually refreshed vector index;
-- the test count is now 84, not 67;
+- the test count is now 88, not 67;
 - real invoice field accuracy remains unmeasured even though synthetic OCR smoke tests and the 55-file completeness diagnostic have run; and
 - draft PR/GitOps references should be removed because this private college project does not use that delivery process.
 

@@ -1,7 +1,7 @@
 ﻿# A. About this project / Invoice Parser Agent
 
 AI-assisted invoice parser for utility and telecom invoices.
-The project combines local OCR, deterministic field extraction, provider-specific RAG memory, an agentic A/B workflow, an optional independent LLM judge, a local Gradio lab, a Gemini PDF second pass, and a review dashboard.
+The project combines local OCR, deterministic field extraction, provider-specific RAG memory, an agentic A/B workflow, an optional independent LLM judge, a local Gradio lab, Gemini/OpenAI PDF second passes, and a review dashboard.
 
 This document is organized in these sections:
 A. About project
@@ -87,7 +87,7 @@ Folder description:
 - `data/data_pdf/`: canonical/searchable PDFs generated or copied by OCR processing.
 - `data/data_txt/`: selected OCR text and diagnostics.
 - `data/data_processed/`: structured CSV, reports, and generated outputs.
-- `data/data_processed/llm_second_pass/`: Gemini raw TXT and normalized JSON outputs.
+- `data/data_processed/llm_second_pass/`: provider-specific LLM raw TXT and normalized JSON outputs.
 - `rag/`: provider memory adapter and provider-scoped retrieval utilities.
 - `vector_store/`: FAISS/LlamaIndex indexing with a deterministic Torch embedding; it does not use or download Hugging Face models.
 - `llm/`: typed LLM models, prompt templates, and request/response schemas.
@@ -107,7 +107,7 @@ Notes:
 ## LLM module structure
 
 It includes:
-- `scripts/second_pass_llm.py`: orchestration, Gemini TXT parsing, normalization, validation, artifact writing, and CLI.
+- `scripts/second_pass_llm.py`: orchestration, LLM TXT parsing, normalization, validation, artifact writing, and CLI.
 - `llm/agent/models.py`: typed prompt, payload, normalized extraction, and runtime result models.
 - `llm/agent/prompts.py`: prompt templates.
 - `llm/api/schemas.py`: typed request/output schemas for API-style integrations.
@@ -201,11 +201,11 @@ Open [http://127.0.0.1:7860]. Upload an invoice PDF or image; the app runs the O
 
 Each A/B artifact records sanitized preprocessing metadata and stage decisions. It does not store the OCR text, model prompts, or API keys in the audit log. The structured plan rows still contain invoice fields and remain under the ignored local `data/` tree.
 
-Plan B Gemini extraction is disabled by default. Without it, Plan B still runs classification, provider-memory retrieval, deterministic fallback extraction, validation, and review routing. Enable **Optional Plan B Gemini extraction** and provide a request-only key to run the stronger OCR + LLM + agent comparison. The uploaded invoice, OCR evidence, and retrieved provider context are sent to Gemini only for that explicitly enabled run; the key is not written to the A/B artifact.
+Plan B model extraction is disabled by default. Without it, Plan B still runs classification, provider-memory retrieval, deterministic fallback extraction, validation, and review routing. Enable **Optional Plan B LLM extraction**, select Gemini or OpenAI, and provide a request-only key to run the stronger OCR + LLM + agent comparison. The uploaded invoice, OCR evidence, and retrieved provider context are sent to the selected provider only for that explicitly enabled run; the key is not written to the A/B artifact.
 
-The **Four-case assessment** tab compares OCR + rules, OCR + direct Gemini, OCR + agentic rules, and OCR + Gemini inside the agentic workflow. Leave the key blank to run only the two offline cases. Providing a key and clicking **Run four cases** performs two Gemini calls so the direct and RAG-assisted candidates remain separate. The key is not stored in the result artifact.
+The **Four-case assessment** tab compares OCR + rules, OCR + direct LLM, OCR + agentic rules, and OCR + LLM inside the agentic workflow. Leave the key blank to run only the two offline cases. Providing a Gemini or OpenAI key and clicking **Run four cases** performs two calls so the direct and RAG-assisted candidates remain separate. The key is not stored in the result artifact.
 
-The **Optional independent LLM judge** panel can compare both results with the OCR evidence through Gemini or a user-configured OpenAI-compatible endpoint. It sends invoice text only after **Run LLM judge** is clicked and never replaces the human verdict. Select **Gemini** to reuse the request-only extraction key; no base URL is needed. A different Gemini model is preferable for the judge, but the same API key can be used. For an OpenAI-compatible judge, configure:
+The **Optional independent LLM judge** panel can compare both results with the OCR evidence through Gemini, the official OpenAI Responses API, or a user-configured OpenAI-compatible endpoint. It sends invoice text only after **Run LLM judge** is clicked and never replaces the human verdict. Select the same official provider to reuse the request-only extraction key; no base URL is needed for Gemini or OpenAI. A different model is preferable for the judge, but the same provider key can be used. For a separate OpenAI-compatible judge, configure:
 
 ```powershell
 $env:JUDGE_BASE_URL="http://127.0.0.1:8000/v1"
@@ -344,7 +344,7 @@ For test purpose run the current test suite:
 uv run pytest
 ```
 
-The tests mock Gemini API calls and do not call the real API.
+The tests mock Gemini and OpenAI API calls and do not call either real API.
 
 # D. Security and Limitations
 

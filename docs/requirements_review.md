@@ -19,7 +19,7 @@ Company aliases were checked against the [Portuguese government EEM entry](https
 
 ## Prioritized remaining work
 
-An experimental coded-agent Plan B now provides an assessment/demo path without changing production results. It coordinates classification, provider memory, Gemini extraction, stronger validation, and review routing; stores a step trace; compares its fields with deterministic Plan A; and captures a human accuracy verdict. The strict five-distinct-prior-approvals rule and stronger consistency checks currently belong to Plan B, so the P0 production gaps below remain until A/B evidence supports promotion.
+An experimental coded-agent Plan B now provides an assessment/demo path without changing production results. It coordinates classification, provider memory, optional Gemini or OpenAI extraction, stronger validation, and review routing; stores a step trace; compares its fields with deterministic Plan A; and captures a human accuracy verdict. The strict five-distinct-prior-approvals rule and stronger consistency checks currently belong to Plan B, so the P0 production gaps below remain until A/B evidence supports promotion.
 
 | Priority | Requirement and current evidence | Concrete next step and completion evidence |
 | --- | --- | --- |
@@ -41,11 +41,11 @@ Recommended implementation order: trustworthy approval history and shared valida
 - Historical `unknown` memory may contain multiple companies, and old rows may have incorrectly inferred EDP. It is not automatically redistributed because seller identity cannot be safely reconstructed without reviewing the source. Correct seller fields, approve the relevant invoices again, and rebuild the vector index.
 - Existing OCR artifacts retain their original diagnostics. New OCR reports no longer include `provider_keyword_count` or `signals.provider_keywords`; external consumers must not require those fields.
 - Generic deterministic extraction recognizes labeled sellers and likely company headers. Unreadable or unusual layouts can still leave fields null; use manual review or the Gemini PDF pass. Do not interpret these changes as universal extraction accuracy.
-- The 55 local preprocessed inputs and all 30 source images were exercised during the regression repair. Live Gemini calls, model downloads, Docker, and AWS were not exercised. The Gradio interface requires an explicit action before each external LLM call.
+- The 55 local preprocessed inputs and all 30 source images were exercised during the regression repair. Live Gemini/OpenAI calls, model downloads, Docker, and AWS were not exercised. The Gradio interface requires an explicit action before each external LLM call.
 
 ## Verification and commands
 
-The initial suite had 41 passing tests and two failures: Windows basename handling on Linux, and a test assuming two immediately written files always have different timestamps. Both are addressed. After the current changes, `python3 -m pytest -q` completed with **84 passed**. The local pytest asyncio plugin emitted a configuration deprecation warning.
+The initial suite had 41 passing tests and two failures: Windows basename handling on Linux, and a test assuming two immediately written files always have different timestamps. Both are addressed. After the current changes, `python3 -m pytest -q` completed with **88 passed**. The local pytest asyncio plugin emitted a configuration deprecation warning.
 
 The deterministic extraction CLI and provider-memory `init` CLI also passed using one synthetic EEM bill and temporary output paths. A local FAISS/LlamaIndex index build and provider-scoped EPAL retrieval passed with the Torch feature-hash embedding. The Gradio application responds with HTTP 200 on loopback, and its synthetic A/B callback produces all five agent events without an external LLM call. The enhanced OCR pass regenerated derived artifacts for the 30 local source images; raw invoices were not changed. PowerShell parsing validates the local/AWS operator scripts. Docker is not installed in the current Windows host, so the image build and exact-image transfer still require operator verification.
 
