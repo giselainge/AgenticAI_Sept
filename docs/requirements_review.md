@@ -45,7 +45,7 @@ Recommended implementation order: trustworthy approval history and shared valida
 
 ## Verification and commands
 
-The initial suite had 41 passing tests and two failures: Windows basename handling on Linux, and a test assuming two immediately written files always have different timestamps. Both are addressed. After the current changes, `python3 -m pytest -q` completed with **89 passed**. The local pytest asyncio plugin emitted a configuration deprecation warning.
+The initial suite had 41 passing tests and two failures: Windows basename handling on Linux, and a test assuming two immediately written files always have different timestamps. Both are addressed. After the current changes, `python3 -m pytest -q` completed with **94 passed**. The local pytest asyncio plugin emitted a configuration deprecation warning.
 
 The deterministic extraction CLI and provider-memory `init` CLI also passed using one synthetic EEM bill and temporary output paths. A local FAISS/LlamaIndex index build and provider-scoped EPAL retrieval passed with the Torch feature-hash embedding. The Gradio application responds with HTTP 200 on loopback, and its synthetic A/B callback produces all five agent events without an external LLM call. The enhanced OCR pass regenerated derived artifacts for the 30 local source images; raw invoices were not changed. PowerShell parsing validates the local/AWS operator scripts. Docker is not installed in the current Windows host, so the image build and exact-image transfer still require operator verification.
 

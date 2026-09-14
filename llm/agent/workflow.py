@@ -165,6 +165,16 @@ def field_completion(row: dict[str, str]) -> float:
     return sum(not _is_missing(row.get(field)) for field in measured) / len(measured)
 
 
+def merge_invoice_rows(baseline: dict[str, Any], model_fields: dict[str, Any]) -> dict[str, str]:
+    """Overlay usable model fields while retaining evidence already recovered by OCR rules."""
+    merged = {key: str(value) for key, value in baseline.items()}
+    for name in FIELDNAMES:
+        if name not in model_fields or _is_missing(model_fields.get(name)):
+            continue
+        merged[name] = str(model_fields[name])
+    return merged
+
+
 def count_prior_approved(kb: dict[str, Any], provider_id: str, current_row: dict[str, str]) -> int:
     """Count distinct prior approvals; legacy extracted rows never qualify."""
     if provider_id == "unknown":
@@ -301,10 +311,7 @@ class ExtractionAgent(PipelineAgent):
                 "llm_failed_deterministic_extraction_retained",
                 errors=list(result.errors),
             )
-        merged = dict(context.working_row)
-        for name in FIELDNAMES:
-            if name in result.parsed:
-                merged[name] = str(result.parsed[name])
+        merged = merge_invoice_rows(context.working_row, result.parsed)
         merged["ocr_text_file"] = str(context.text_path)
         context.working_row = merged
         context.provider_id = canonical_provider(merged.get("provider_name", ""), context.ocr_text)

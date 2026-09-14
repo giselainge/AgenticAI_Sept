@@ -19,6 +19,7 @@ from llm.agent.workflow import (
     PlanResult,
     count_prior_approved,
     field_completion,
+    merge_invoice_rows,
     route_invoice,
     run_agentic_ab_test,
     validate_invoice,
@@ -75,8 +76,13 @@ def _candidate(case_id: str, label: str, plan: PlanResult, *, status: str = "mea
     )
 
 
-def _direct_llm_plan(row: dict[str, Any], kb_path: Path, provider: str) -> PlanResult:
-    normalized = {key: str(value) for key, value in row.items() if isinstance(value, (str, int, float, bool))}
+def _direct_llm_plan(
+    baseline_row: dict[str, Any],
+    model_row: dict[str, Any],
+    kb_path: Path,
+    provider: str,
+) -> PlanResult:
+    normalized = merge_invoice_rows(baseline_row, model_row)
     errors = validate_invoice(normalized)
     provider_id = canonical_provider(normalized.get("provider_name", ""))
     approved = count_prior_approved(load_kb(kb_path), provider_id, normalized)
@@ -165,7 +171,12 @@ def run_four_case_evaluation(
             kb_path=kb_path,
         )
         if direct.used and not direct.errors:
-            direct_plan = _direct_llm_plan(direct.parsed, Path(kb_path), selected_provider)
+            direct_plan = _direct_llm_plan(
+                offline.plan_a.row,
+                direct.parsed,
+                Path(kb_path),
+                selected_provider,
+            )
             direct_plan.row["ocr_text_file"] = str(text_path)
             cases["ocr_llm"] = _candidate("ocr_llm", "OCR + LLM", direct_plan)
         else:

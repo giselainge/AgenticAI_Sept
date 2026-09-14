@@ -34,6 +34,20 @@ def configure_local_invoice(monkeypatch, tmp_path: Path) -> Path:
     return source
 
 
+def test_local_upload_copy_is_content_stable_and_does_not_cascade_names(tmp_path: Path) -> None:
+    source = tmp_path / "invoice.pdf"
+    source.write_bytes(b"same invoice")
+    uploads = tmp_path / "uploads"
+
+    first = gradio_app._copy_local(source, uploads)
+    repeated_source = tmp_path / f"{first.stem}_abcdef12.pdf"
+    repeated_source.write_bytes(source.read_bytes())
+    second = gradio_app._copy_local(repeated_source, uploads)
+
+    assert first == second
+    assert len(list(uploads.glob("*.pdf"))) == 1
+
+
 def test_local_gradio_callback_runs_both_plans_without_llm(tmp_path: Path, monkeypatch) -> None:
     output_dir = tmp_path / "ab"
     kb_path = tmp_path / "knowledge_base.json"

@@ -6,10 +6,10 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -69,7 +69,15 @@ def _uploaded_path(uploaded_file: Any) -> Path | None:
 
 def _copy_local(source: Path, destination_dir: Path) -> Path:
     destination_dir.mkdir(parents=True, exist_ok=True)
-    destination = destination_dir / f"{_safe_stem(source.stem)}_{uuid.uuid4().hex[:8]}{source.suffix.lower()}"
+    stem = _safe_stem(source.stem)
+    while re.search(r"_[0-9a-f]{8}$", stem, re.IGNORECASE):
+        stem = stem[:-9]
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    destination = destination_dir / f"{stem}_{digest[:8]}{source.suffix.lower()}"
+    if destination.exists() and hashlib.sha256(destination.read_bytes()).hexdigest() == digest:
+        return destination
+    if source.resolve() == destination.resolve():
+        return source
     shutil.copy2(source, destination)
     return destination
 

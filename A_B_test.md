@@ -70,7 +70,7 @@ The judge supports three connectors. **Gemini** needs a model name plus a Gemini
 
 ## Local Gradio test interface
 
-Run `uv run python scripts\gradio_app.py` and open `http://127.0.0.1:7860`. The interface accepts an invoice PDF or image, runs the built-in OCR pipeline, shows retrieval percentages and all 19 required fields side by side, exposes OCR/post-processing diagnostics and a sanitized stage log, shows the five-agent trace, exposes the provider knowledge base and local FAISS rebuild action, and records the human accuracy verdict in the A/B artifact. Plan B LLM extraction is disabled by default and requires an explicit checkbox plus a request-only Gemini or OpenAI key. The judge makes a separate external call only after the user selects it and clicks **Run LLM judge**; its field decisions are added to the comparison table. The server rejects non-loopback host arguments.
+Run `uv run python scripts\gradio_app.py` and open `http://127.0.0.1:7860`. The interface accepts an invoice PDF or image, runs the built-in OCR pipeline, shows retrieval percentages and all 19 required fields side by side, exposes OCR/post-processing diagnostics and a sanitized stage log, and shows the five-agent trace. The visible **Retrieve fields with GPT / Gemini** action always enables the Plan B extraction agent; **Run OCR-only A/B test** keeps the local baseline explicit. The judge makes a separate external call only after the user requests it. The server rejects non-loopback host arguments.
 
 The **Four-case assessment** tab keeps these configurations distinct:
 
@@ -81,6 +81,8 @@ The **Four-case assessment** tab keeps these configurations distinct:
 | `ocr_agentic` | Deterministic fields from OCR | Five-agent Plan B | Yes, retrieved but not consumed by the rules extractor |
 | `ocr_llm_agentic` | Gemini or OpenAI PDF/OCR extraction | Five-agent Plan B | Yes, supplied to the selected provider |
 
-With the provider key blank, the local cases run and the two model cases are explicitly unavailable. Pasting a key and clicking **Run four cases** makes two extraction calls to the selected provider. The independent four-case judge ranks available candidates, while a separate human verdict records the verified result. API keys are never written to the artifact.
+With the provider key blank, the local cases run and the two model cases are explicitly unavailable. Pasting a key and clicking **Run four cases** makes two extraction calls to the selected provider. Both model cases retain valid deterministic fields when the model returns `null`, then overlay non-null model values. The tab renders the source pages next to a 19-row table containing all four candidates and the judge's field decisions. A reviewer enters exact source values (or `<absent>`), and the application calculates accuracy against that human ground truth. Field retrieval percentage measures non-null completeness and is not an accuracy claim.
+
+After verification, **Save reviewed fields to KB and test retrieval** overlays the source-verified values on the selected candidate, writes the reviewed example into the matching provider memory, rebuilds the local FAISS/LlamaIndex index, queries it, and reports whether the exact saved example was retrieved. This write occurs only on that explicit action. API keys are never written to the artifact or knowledge base.
 
 The assessment defines electricity, water, natural gas, and telecom as supported invoice categories. The classification and review-routing agents reject documents outside those four categories.

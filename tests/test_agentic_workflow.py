@@ -8,6 +8,7 @@ from llm.agent.workflow import (
     AUTO_APPROVAL_MIN_VALIDATED,
     count_prior_approved,
     judge_ab_artifact,
+    merge_invoice_rows,
     record_ab_verdict,
     run_agentic_ab_test,
     validate_invoice,
@@ -107,6 +108,27 @@ def test_plan_b_fallback_is_explicit_when_llm_is_unavailable(tmp_path: Path) -> 
     extraction = next(event for event in result.plan_b_trace if event.agent == "extraction_agent")
     assert extraction.status == "fallback"
     assert set(extraction.metrics["reasons"]) == {"pdf_unavailable", "api_key_unavailable"}
+
+
+def test_ocr_llm_merge_retains_rule_fields_when_model_returns_null() -> None:
+    baseline = {
+        "invoice_type": "electricity",
+        "provider_name": "EDP",
+        "provider_vat_number": "500000000",
+        "invoice_number": "null",
+    }
+    model = {
+        "invoice_type": "electricity",
+        "provider_name": "null",
+        "provider_vat_number": "null",
+        "invoice_number": "FT 123",
+    }
+
+    merged = merge_invoice_rows(baseline, model)
+
+    assert merged["provider_name"] == "EDP"
+    assert merged["provider_vat_number"] == "500000000"
+    assert merged["invoice_number"] == "FT 123"
 
 
 def test_plan_b_validator_checks_real_dates_and_financial_consistency() -> None:
