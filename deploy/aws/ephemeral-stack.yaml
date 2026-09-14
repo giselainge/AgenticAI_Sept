@@ -6,7 +6,7 @@ Description: >-
 Parameters:
   AllowedCidr:
     Type: String
-    Description: Public IPv4 CIDR allowed to reach ports 7860, 8000, and 8501.
+    Description: Public IPv4 CIDR allowed to reach the Plan A/B lab on port 7860.
     AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
   ExpiresAt:
     Type: String
@@ -82,16 +82,6 @@ Resources:
           IpProtocol: tcp
           FromPort: 7860
           ToPort: 7860
-          CidrIp: !Ref AllowedCidr
-        - Description: FastAPI health and metadata service
-          IpProtocol: tcp
-          FromPort: 8000
-          ToPort: 8000
-          CidrIp: !Ref AllowedCidr
-        - Description: Invoice review dashboard
-          IpProtocol: tcp
-          FromPort: 8501
-          ToPort: 8501
           CidrIp: !Ref AllowedCidr
       VpcId: !Ref Vpc
 
@@ -304,7 +294,6 @@ Resources:
   CleanupSchedule:
     Type: AWS::Scheduler::Schedule
     Properties:
-      ActionAfterCompletion: DELETE
       Description: !Sub "Delete ${AWS::StackName} at ${ExpiresAt} UTC"
       FlexibleTimeWindow:
         Mode: "OFF"
@@ -320,10 +309,6 @@ Outputs:
     Value: !Ref ApplicationInstance
   DeploymentBucketName:
     Value: !Ref DeploymentBucket
-  ApiUrl:
-    Value: !Sub "http://${ApplicationInstance.PublicDnsName}:8000"
-  DashboardUrl:
-    Value: !Sub "http://${ApplicationInstance.PublicDnsName}:8501"
   GradioUrl:
     Value: !Sub "http://${ApplicationInstance.PublicDnsName}:7860"
   KnowledgeBaseDatabasePath:

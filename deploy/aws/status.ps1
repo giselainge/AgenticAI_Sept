@@ -49,8 +49,6 @@ $stack = $stackJson | ConvertFrom-Json
 Write-Host "Stack status: $($stack.Status)"
 $outputMap = @{}
 foreach ($output in $stack.Outputs) { $outputMap[$output.OutputKey] = $output.OutputValue }
-Write-Host "API ready:  $($outputMap['ApiUrl'])/ready"
-Write-Host "Dashboard:  $($outputMap['DashboardUrl'])"
 Write-Host "Gradio lab: $($outputMap['GradioUrl'])"
 Write-Host "Auto-delete: $($outputMap['ExpiresAtUtc']) UTC"
 

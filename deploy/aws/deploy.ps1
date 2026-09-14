@@ -118,18 +118,14 @@ try {
         "rm -f /tmp/application-image.tar",
         "chown -R 10001:10001 /opt/billing/data /opt/billing/runtime",
         "docker rm -f billing-api billing-dashboard billing-gradio 2>/dev/null || true",
-        "docker run -d --name billing-api --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --log-opt max-size=10m --log-opt max-file=2 --tmpfs /tmp:rw,nosuid,nodev,size=1g -p 8000:8000 -e INVOICE_DATA_ROOT=/app/data -e RAG_DB_PATH=/app/runtime/knowledge_base.sqlite3 -e VECTOR_STORE_DIR=/app/runtime/vector_store -e OCR_LANGUAGES=por+eng -e OCR_DPI=300 -e OCR_TIMEOUT_SECONDS=900 -e OCR_IMAGE_MIN_DIMENSION=1800 -e OCR_IMAGE_MAX_PIXELS=24000000 -e OCR_IMAGE_MAX_SCALE=3.0 -e OMP_THREAD_LIMIT=2 -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime $ImageTag",
-        "docker run -d --name billing-dashboard --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --log-opt max-size=10m --log-opt max-file=2 --tmpfs /tmp:rw,nosuid,nodev,size=1g -p 8501:8501 -e INVOICE_DATA_ROOT=/app/data -e RAG_DB_PATH=/app/runtime/knowledge_base.sqlite3 -e VECTOR_STORE_DIR=/app/runtime/vector_store -e OCR_LANGUAGES=por+eng -e OCR_DPI=300 -e OCR_TIMEOUT_SECONDS=900 -e OCR_IMAGE_MIN_DIMENSION=1800 -e OCR_IMAGE_MAX_PIXELS=24000000 -e OCR_IMAGE_MAX_SCALE=3.0 -e OMP_THREAD_LIMIT=2 -e HEALTHCHECK_PORT=8501 -e HEALTHCHECK_PATH=/ -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime $ImageTag python scripts/dashboard.py --host 0.0.0.0 --port 8501",
         "docker run -d --name billing-gradio --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --log-opt max-size=10m --log-opt max-file=2 --tmpfs /tmp:rw,nosuid,nodev,size=1g -p 7860:7860 -e INVOICE_DATA_ROOT=/app/data -e RAG_DB_PATH=/app/runtime/knowledge_base.sqlite3 -e VECTOR_STORE_DIR=/app/runtime/vector_store -e OCR_LANGUAGES=por+eng -e OCR_DPI=300 -e OCR_TIMEOUT_SECONDS=900 -e OCR_IMAGE_MIN_DIMENSION=1800 -e OCR_IMAGE_MAX_PIXELS=24000000 -e OCR_IMAGE_MAX_SCALE=3.0 -e OMP_THREAD_LIMIT=2 -e ALLOW_CONTAINER_BIND=1 -e HEALTHCHECK_PORT=7860 -e HEALTHCHECK_PATH=/ -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime $ImageTag python scripts/gradio_app.py --host 0.0.0.0 --port 7860",
         "docker run --rm --read-only --tmpfs /tmp:rw,nosuid,nodev,size=256m --tmpfs /app/data:rw,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=0770 --tmpfs /app/runtime:rw,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=0770 $ImageTag python scripts/runtime_check.py --strict --expect-fingerprint $qualityFingerprint",
-        "curl --fail --retry 12 --retry-delay 5 http://127.0.0.1:8000/ready >/dev/null",
-        "curl --fail --retry 12 --retry-delay 5 http://127.0.0.1:8501/ >/dev/null",
         "curl --fail --retry 12 --retry-delay 5 http://127.0.0.1:7860/ >/dev/null"
     )
     $request = @{
         DocumentName = "AWS-RunShellScript"
         InstanceIds = @($instanceId)
-        Comment = "Deploy the Agentic Invoice Parser containers"
+        Comment = "Deploy the Agentic Invoice Parser Plan A/B lab"
         TimeoutSeconds = 3600
         Parameters = @{ commands = $commands }
     }
@@ -152,8 +148,6 @@ try {
     Write-Host "Deployment ready."
     Write-Host "Image:      $imageId"
     Write-Host "OCR profile: $qualityFingerprint"
-    Write-Host "API ready:  $($outputMap['ApiUrl'])/ready"
-    Write-Host "Dashboard:  $($outputMap['DashboardUrl'])"
     Write-Host "Gradio lab: $($outputMap['GradioUrl'])"
     Write-Host "Auto-delete: $($outputMap['ExpiresAtUtc']) UTC"
     Write-Host "Delete early: .\deploy\aws\destroy.ps1 -Profile $Profile -Region $Region -StackName $StackName"

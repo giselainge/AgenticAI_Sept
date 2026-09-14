@@ -74,10 +74,10 @@ def test_cloudformation_stack_is_restricted_managed_and_self_deleting() -> None:
     assert resources["ApplicationInstance"]["Properties"]["MetadataOptions"]["HttpTokens"] == "required"
     assert "AmazonSSMManagedInstanceCore" in resources["InstanceRole"]["Properties"]["ManagedPolicyArns"][0]
     ingress = resources["ApplicationSecurityGroup"]["Properties"]["SecurityGroupIngress"]
-    assert {rule["FromPort"] for rule in ingress} == {7860, 8000, 8501}
+    assert {rule["FromPort"] for rule in ingress} == {7860}
     assert all(rule["CidrIp"] == {"Ref": "AllowedCidr"} for rule in ingress)
     assert resources["CleanupSchedule"]["Type"] == "AWS::Scheduler::Schedule"
-    assert resources["CleanupSchedule"]["Properties"]["ActionAfterCompletion"] == "DELETE"
+    assert "ActionAfterCompletion" not in resources["CleanupSchedule"]["Properties"]
     cleanup_code = resources["CleanupFunction"]["Properties"]["Code"]["ZipFile"]
     assert "delete_stack" in cleanup_code
     assert "delete_objects" in cleanup_code
@@ -107,9 +107,9 @@ def test_deployment_transfers_the_tested_image_without_secrets_or_private_data()
     assert "JUDGE_API_KEY" not in deploy_script
     assert "iseg" not in deployment_files.lower()
     assert "ec2-108-132-55-75" not in deployment_files
-    assert "HEALTHCHECK_PORT=8501" in deploy_script
-    assert "HEALTHCHECK_PATH=/" in deploy_script
     assert "billing-gradio" in deploy_script
+    assert "docker run -d --name billing-api" not in deploy_script
+    assert "docker run -d --name billing-dashboard" not in deploy_script
     assert "ALLOW_CONTAINER_BIND=1" in deploy_script
     assert "scripts/runtime_check.py --strict --expect-fingerprint" in deploy_script
     assert "0.0.0.0/0" in deploy_script  # explicitly rejected by the script
