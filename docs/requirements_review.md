@@ -41,7 +41,7 @@ Recommended implementation order: trustworthy approval history and shared valida
 - Historical `unknown` memory may contain multiple companies, and old rows may have incorrectly inferred EDP. It is not automatically redistributed because seller identity cannot be safely reconstructed without reviewing the source. Correct seller fields, approve the relevant invoices again, and rebuild the vector index.
 - Existing OCR artifacts retain their original diagnostics. New OCR reports no longer include `provider_keyword_count` or `signals.provider_keywords`; external consumers must not require those fields.
 - Generic deterministic extraction recognizes labeled sellers and likely company headers. Unreadable or unusual layouts can still leave fields null; use manual review or the Gemini PDF pass. Do not interpret these changes as universal extraction accuracy.
-- The 55 local preprocessed inputs and all 30 source images were exercised during the regression repair. Live Gemini/OpenAI calls, model downloads, Docker, and AWS were not exercised. The Gradio interface requires an explicit action before each external LLM call.
+- All 72 canonical preprocessed variants and all 77 source files were exercised locally. Ten stored model-output artifacts also passed the normalized-schema and residual-semantic audit. Live Gemini/OpenAI calls over the complete corpus, model downloads, Docker, and AWS were not exercised. The Gradio interface requires an explicit action before each external LLM call.
 
 ## Verification and commands
 

@@ -230,8 +230,16 @@ def _run_summary(result: AgenticABResult) -> dict[str, Any]:
 def _postprocess_summary(result: AgenticABResult) -> dict[str, Any]:
     memory_event = next((event for event in result.plan_b_trace if event.agent == "provider_memory_agent"), None)
     route_event = next((event for event in result.plan_b_trace if event.agent == "review_routing_agent"), None)
+
+    def rejected_fields(row: dict[str, str]) -> list[str]:
+        warning = str(row.get("extraction_warnings") or "")
+        match = re.search(r"Post-processing rejected implausible field\(s\):\s*([^.|]+)", warning)
+        return [field.strip() for field in match.group(1).split(",")] if match else []
+
     return {
         "classification": result.plan_b.row.get("invoice_type", "unsupported"),
+        "plan_a_rejected_fields": rejected_fields(result.plan_a.row),
+        "plan_b_rejected_fields": rejected_fields(result.plan_b.row),
         "plan_a_validation_errors": result.plan_a.validation_errors,
         "plan_b_validation_errors": result.plan_b.validation_errors,
         "plan_a_route": result.plan_a.route,
