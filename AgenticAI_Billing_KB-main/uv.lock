@@ -1,0 +1,19 @@
+version = 1
+revision = 3
+requires-python = ">=3.14"
+
+[manifest]
+members = [
+    "agenticai-billing-kb",
+    "scripts",
+]
+
+[[package]]
+name = "agenticai-billing-kb"
+version = "0.1.0"
+source = { virtual = "." }
+
+[[package]]
+name = "scripts"
+version = "0.1.0"
+source = { virtual = "scripts" }

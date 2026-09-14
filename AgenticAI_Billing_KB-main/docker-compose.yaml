@@ -1,0 +1,14 @@
+services:
+  billing-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agentic-ai-billing-agent:latest
+    container_name: billing-agent
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./index:/app/index
+    restart: unless-stopped

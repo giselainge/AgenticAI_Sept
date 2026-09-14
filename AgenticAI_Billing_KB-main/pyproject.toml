@@ -1,0 +1,12 @@
+[project]
+name = "AgenticAI_Billing_KB"
+version = "0.1.0"
+description = "AgenticAI_Billing_KB"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+    "scripts",
+]
