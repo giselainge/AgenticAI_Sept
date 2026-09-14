@@ -1,22 +1,20 @@
 # Billing assessment AWS deployment
 
-This package deploys the invoice application for a short billing assessment without using the AWS console after login. It creates one CloudFormation stack containing a VPC, public subnet, restricted security group, Amazon Linux 2023 EC2 instance, encrypted EBS volume, private S3 deployment bucket, IAM roles, and an EventBridge Scheduler/Lambda cleanup path.
+This package deploys only the Plan A/Plan B inspection lab for a short billing assessment without using the AWS console after login. It creates one CloudFormation stack containing a VPC, public subnet, restricted security group, Amazon Linux 2023 EC2 instance, encrypted EBS volume, private S3 deployment bucket, IAM roles, and an EventBridge Scheduler/Lambda cleanup path.
 
-The instance is managed with Systems Manager; port 22 is never opened. Ports 7860, 8000, and 8501 are restricted to the public `/32` address detected by the deployment script. The cleanup schedule empties the deployment bucket and requests deletion of the complete stack after 1–12 hours. `destroy.ps1` provides an explicit early-deletion path.
+The instance is managed with Systems Manager; port 22 is never opened. Only port 7860 is reachable, restricted to the public `/32` address detected by the deployment script. The cleanup schedule empties the deployment bucket and requests deletion of the complete stack after 1–12 hours. `destroy.ps1` provides an explicit early-deletion path.
 
 ## What is deployed
 
-- `http://<temporary-host>:8000/ready`: the FastAPI readiness and OCR-profile report.
-- `http://<temporary-host>:8501/`: the invoice import and review dashboard.
 - `http://<temporary-host>:7860/`: the Gradio source-verified A/B lab.
-- Three containers loaded from the exact locally tested hardened Docker image.
+- One Gradio container loaded from the exact locally tested hardened Docker image.
 - A transactional SQLite provider-memory database at `/opt/billing/runtime/knowledge_base.sqlite3`,
   persisted on the encrypted EC2 volume only for the life of the stack.
 
 The first Gradio session creates the database with a safe provider/category catalog and no invoice values.
 Uploaded or reviewed invoices then populate that runtime database; private local invoice files are never bundled.
 
-No Gemini key is uploaded. Enter a temporary key in the dashboard when running Gemini or Plan B. The package does not deploy `Qwen/Qwen3.5-9B`: the old `/v1` address was an OpenAI-compatible model service, while this repository currently calls Gemini directly and contains no Qwen client. Hosting a 9B model requires a separate GPU design, model licensing review, and cost controls.
+No Gemini key is uploaded. Enter a temporary key in the Gradio lab only when explicitly running Plan B. The AWS deployment provides Plan A and Plan B only; it does not run ablation variants. The package does not deploy `Qwen/Qwen3.5-9B`.
 
 ## One-time AWS CLI setup
 
@@ -78,7 +76,7 @@ The script:
 3. creates the self-deleting CloudFormation stack;
 4. runs a strict OCR dependency check in the already tested local image;
 5. exports that exact image, computes its SHA-256 digest, and uploads it to the private bucket without invoice data or secrets;
-6. verifies the digest, loads the image, and starts the API, dashboard, and Gradio containers through SSM Run Command;
+6. verifies the digest, loads the image, and starts only the Gradio A/B lab through SSM Run Command;
 7. verifies the same OCR quality fingerprint on EC2; and
 8. prints the temporary URLs and UTC deletion time.
 
