@@ -1,5 +1,8 @@
 .git
 .github
+.agents
+.codex
+.vercel
 .venv
 __pycache__
 *.py[cod]
@@ -15,5 +18,7 @@ rag/knowledge_base.json
 rag/last_retrieval_context.json
 tests
 docs
+deploy
+requirements-dev.txt
 *.md
 uv.lock

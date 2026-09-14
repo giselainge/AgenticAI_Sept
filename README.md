@@ -1,6 +1,6 @@
 ﻿# A. About this project / Invoice Parser Agent
 
-AI-assisted invoice parser for utility and telecom invoices. 
+AI-assisted invoice parser for utility and telecom invoices.
 The project combines local OCR, deterministic field extraction, provider-specific RAG memory, a Gemini PDF second pass and a local dashboard for human review.
 
 This documment is organized in these sections:
@@ -96,7 +96,7 @@ Folder description:
 - `docs/`: supporting project notes.
 
 Notes:
-- The `data/` tree is intentionally trackable in this repository. A fresh checkout contains shared invoice data only when it has been committed; otherwise the pipeline creates generated output folders as needed. 
+- The `data/` tree is intentionally trackable in this repository. A fresh checkout contains shared invoice data only when it has been committed; otherwise the pipeline creates generated output folders as needed.
 
 
 
@@ -153,7 +153,7 @@ uv venv .venv
 uv pip install -r requirements-dev.txt
 ```
 
-6. Local OCR requires Tesseract and OCRmyPDF runtime tools available on PATH. 
+6. Local OCR requires Tesseract and OCRmyPDF runtime tools available on PATH.
 On Windows, import Tesseract with:
 ```bash
 python -c "import pytesseract; print(pytesseract.get_tesseract_version())"
@@ -166,13 +166,13 @@ If you don't have one, register on https://aistudio.google.com/ and create your 
 
 For command-line use, set:
 ```bash
-$env:GEMINI_API_KEY="your-real-key" 
+$env:GEMINI_API_KEY="your-real-key"
 $env:GEMINI_MODEL="gemini-3.5-flash"
 ```
 
 Notes:
 - The dashboard also has a GEMINI_API_KEY field in **Import Invoices**. It is used only for to import request and is not saved.
-- Gemini PDF extraction uses the optional `google-genai` SDK from `requirements.txt`. 
+- Gemini PDF extraction uses the optional `google-genai` SDK from `requirements.txt`.
 - Tests continue to use mocked callers and do not call the real API.
 
 
@@ -187,7 +187,7 @@ Process has 2 steps:
 
 ### 1.1 OCR text extratction processes all files in `data/data_raw/`.
 New invoices can be added manualy to folder ./data/data_raw/` by yourself.
-Dashboard can also be used to import invoices before running OCR. 
+Dashboard can also be used to import invoices before running OCR.
 Note:
 - The dashboard import flow processes an existing raw file with the same name instead of overwriting it.
 
@@ -200,7 +200,7 @@ Note: OCR process for one file only. Example:
 python scripts\ocr_text_extraction.py --input data\data_raw\agua_01.webp
 ```
 
-Note: The OCR command skips work when the final selected text file already exists. 
+Note: The OCR command skips work when the final selected text file already exists.
 `--force-enhanced` runs OCRmyPDF with enhanced cleanup/oversampling options when OCR is required; it does not run a separate baseline-vs-enhanced comparison pass.
 
 
@@ -315,7 +315,7 @@ python -m pytest tests
 
 The tests mock Gemini API calls and do not call the real API.
 
-# D. Security and Limitations 
+# D. Security and Limitations
 
 ## Security Notes
 
@@ -366,7 +366,7 @@ This private college project has no GitOps, pull-request automation, CI/CD, or V
 
 ## Extraction Schema
 
-The structured CSV uses these fields: 
+The structured CSV uses these fields:
 
 - `source_file`
 - `ocr_text_file`
