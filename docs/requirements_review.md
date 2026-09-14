@@ -45,7 +45,7 @@ Recommended implementation order: trustworthy approval history and shared valida
 
 ## Verification and commands
 
-The initial suite had 41 passing tests and two failures: Windows basename handling on Linux, and a test assuming two immediately written files always have different timestamps. Both are addressed. After the current changes, `python3 -m pytest -q` completed with **70 passed**. The local pytest asyncio plugin emitted a configuration deprecation warning.
+The initial suite had 41 passing tests and two failures: Windows basename handling on Linux, and a test assuming two immediately written files always have different timestamps. Both are addressed. After the current changes, `python3 -m pytest -q` completed with **73 passed**. The local pytest asyncio plugin emitted a configuration deprecation warning.
 
 The deterministic extraction CLI and provider-memory `init` CLI also passed using one synthetic EEM bill and temporary output paths. A local FAISS/LlamaIndex index build and provider-scoped EPAL retrieval passed with the Torch feature-hash embedding. The Gradio app responded on `127.0.0.1:7860`, and its synthetic A/B callback produced all five agent events without an external LLM call. Existing private invoice files and runtime memory were not regenerated.
 
