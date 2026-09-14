@@ -20,6 +20,12 @@ def test_provider_memory_documents_include_metadata_without_vector_dependencies(
                 "provider_id": "epal",
                 "provider_name": "EPAL",
                 "provider_specific_extraction_tips": ["Total appears near Montante."],
+                "previously_validated_invoices": [
+                    {
+                        "signature": "verified-123",
+                        "validated_fields": {"invoice_number": "FT 123", "total_value": "10.00"},
+                    }
+                ],
                 "common_ocr_corrections": {"O": "0"},
                 "known_invoice_layouts": [
                     {"invoice_type": "water", "fields_seen": ["invoice_number", "total_value"]}
@@ -39,8 +45,13 @@ def test_provider_memory_documents_include_metadata_without_vector_dependencies(
 
     documents = provider_memory_documents(kb)
 
-    assert len(documents) == 5
+    assert len(documents) == 6
     assert any("Montante" in _doc_text(document) for document in documents)
+    assert any(
+        getattr(document, "metadata", {}).get("memory_section") == "validated_example"
+        and getattr(document, "metadata", {}).get("signature") == "verified-123"
+        for document in documents
+    )
     assert all(getattr(document, "metadata", {})["provider_id"] == "epal" for document in documents)
 
 
