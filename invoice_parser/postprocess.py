@@ -36,6 +36,12 @@ _FINANCIAL_LABEL = re.compile(
 _CURRENCY_MARKER = re.compile(r"(?:€|\$|£|₺|\b(?:EUR|USD|GBP|TRY|TL)\b)", re.IGNORECASE)
 _MONEY_TOKEN = re.compile(r"(?<!\d)\d{1,3}(?:[ .]\d{3})*(?:[,.]\d{2})(?!\d)")
 _DATE_TOKEN = re.compile(r"\b(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b")
+_LONG_IDENTIFIER = re.compile(r"\b\d{8,15}\b")
+_STRUCTURAL_LABEL = re.compile(
+    r"\b(?:fatura|factura|invoice|contrato|contract|nif|nipc|contribuinte|"
+    r"cliente|customer|account|telefone|phone|email)\b",
+    re.IGNORECASE,
+)
 
 
 def _missing(value: Any) -> bool:
@@ -80,11 +86,27 @@ def _financial_contamination(value: str) -> bool:
 
 
 def _identity_contamination(value: str) -> bool:
-    return _financial_contamination(value) or bool(_MONEY_TOKEN.search(value) or _DATE_TOKEN.search(value))
+    folded = fold_text(value)
+    return _financial_contamination(value) or bool(
+        _MONEY_TOKEN.search(value)
+        or _DATE_TOKEN.search(value)
+        or _LONG_IDENTIFIER.search(value)
+        or _STRUCTURAL_LABEL.search(folded)
+    )
+
+
+def _address_contamination(value: str) -> bool:
+    folded = fold_text(value)
+    return _financial_contamination(value) or bool(
+        _DATE_TOKEN.search(value)
+        or _LONG_IDENTIFIER.search(value)
+        or _STRUCTURAL_LABEL.search(folded)
+    )
 
 
 def _vat(value: str) -> str | None:
-    if _identity_contamination(value):
+    folded = fold_text(value)
+    if _financial_contamination(value) or _DATE_TOKEN.search(value) or _STRUCTURAL_LABEL.search(folded):
         return None
     compact = re.sub(r"[\s.\-/]", "", value).upper()
     if not re.fullmatch(r"(?:[A-Z]{2})?[A-Z0-9]{8,15}", compact):
@@ -178,7 +200,7 @@ def sanitize_invoice_row(row: dict[str, Any]) -> tuple[dict[str, str], list[str]
             normalized = _unit(value)
         elif field in VAT_FIELDS:
             normalized = _vat(value)
-        elif field in ADDRESS_FIELDS and _financial_contamination(value):
+        elif field in ADDRESS_FIELDS and _address_contamination(value):
             normalized = None
         elif field in NAME_FIELDS and _identity_contamination(value):
             normalized = None

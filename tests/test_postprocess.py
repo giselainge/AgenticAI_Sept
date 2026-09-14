@@ -23,6 +23,15 @@ def test_valid_address_keeps_street_number_floor_and_postal_code() -> None:
     assert rejected == []
 
 
+def test_address_with_tax_or_invoice_metadata_is_rejected() -> None:
+    row, rejected = sanitize_invoice_row(
+        {"provider_address": "Avenida Central 10 1000-001 Lisboa NIPC 501234567"}
+    )
+
+    assert row["provider_address"] == "null"
+    assert rejected == ["provider_address"]
+
+
 def test_names_and_vat_numbers_cannot_contain_financial_values() -> None:
     row, rejected = sanitize_invoice_row(
         {
@@ -59,4 +68,3 @@ def test_supported_scalar_values_are_normalized_to_one_schema() -> None:
     assert row["unit_type"] == "kWh"
     assert row["total_value"] == "12.30"
     assert row["valid_invoice"] == "true"
-

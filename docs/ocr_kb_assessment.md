@@ -15,7 +15,7 @@ The current evidence supports an overall **6.2/10** for the repository against t
 | RAG and adaptive memory | 20 | 11 | Provider-scoped tips, OCR corrections, layouts, examples, feedback, validation history, FAISS, LlamaIndex and Torch are implemented. Storage is JSON/CSV rather than the required persistent SQL/NoSQL store, and the index is not automatically refreshed after feedback. |
 | HITL | 10 | 6 | Review, correction notes, approve/reject decisions and the five-prior-approval rule exist. Low model confidence is not consistently used for routing, and feedback does not automatically trigger extraction and validation again. |
 | Deployment and observability | 10 | 4 | Docker, Compose, readiness fingerprints and ephemeral AWS definitions exist. The manual AWS flow transfers the locally tested image and exposes all three services, but no current Docker/AWS execution evidence is available. Deployment is intentionally deferred. |
-| Code and documentation | 10 | 8 | The project uses `pyproject.toml` and `uv.lock`, has privacy boundaries and 100 passing tests. Some presentation claims remain stale. |
+| Code and documentation | 10 | 8 | The project uses `pyproject.toml` and `uv.lock`, has privacy boundaries and 101 passing tests. Some presentation claims remain stale. |
 | **Total** | **100** | **62** | **6.2/10** |
 
 ## Earlier four-option completeness diagnostic
@@ -35,7 +35,7 @@ The offline Plan B changed zero fields across the 55 files because its Extractio
 
 The raw diagnostic summary is stored locally under the ignored private-data tree at `data/data_processed/agentic_ab_tests/preprocessed_offline/preprocessed_field_retrieval_summary.json`.
 
-The current comprehensive post-processing audit covers all 72 canonical preprocessed text variants. It rejected 10 buyer-address values, 10 provider-address values, and 3 service-plan values that violated field semantics. Every resulting Plan A and Plan B offline row has the same ordered 23-column schema and zero residual semantic failures. A separate OCR entry-point audit covers all 77 source files (41 PDF, 22 WebP, 8 JPEG, and 6 PNG): 77 produced usable text and none returned an execution error. Forty-three remain flagged for manual review because one or more OCR evidence or quality signals are weak. These are integrity and completeness checks, not field-accuracy measurements. The local reports are `postprocess_comprehensive_audit.json` and `source_ocr_comprehensive_audit.json` under the private A/B artifact directory.
+The current comprehensive post-processing audit covers all 72 canonical preprocessed text variants. It rejected 21 buyer-address values, 17 provider-address values, 3 buyer-name values, and 3 service-plan values that contained financial or document metadata and therefore violated field semantics. Every resulting Plan A and Plan B offline row has the same ordered 23-column schema and zero residual semantic failures. A separate OCR entry-point audit covers all 77 source files (41 PDF, 22 WebP, 8 JPEG, and 6 PNG): 77 produced usable text and none returned an execution error. Forty-three remain flagged for manual review because one or more OCR evidence or quality signals are weak. These are integrity and completeness checks, not field-accuracy measurements. The local reports are `postprocess_comprehensive_audit.json` and `source_ocr_comprehensive_audit.json` under the private A/B artifact directory.
 
 ## OCR faithfulness and quality: 6.5/10
 
@@ -66,7 +66,7 @@ The presentation is reasonably candid about unmeasured gains, missing SQL/NoSQL 
 
 - “semantic vector search” should be described as deterministic token-hash retrieval unless a real semantic embedding model is added;
 - any claim that feedback improves later local Gradio extraction needs qualification, because the effect currently depends on the optional LLM path and a manually refreshed vector index;
-- the test count is now 100, not 67;
+- the test count is now 101, not 67;
 - real invoice field accuracy remains unmeasured even though synthetic OCR smoke tests and the 72-file semantic/completeness diagnostic have run; and
 - draft PR/GitOps references should be removed because this private college project does not use that delivery process.
 
