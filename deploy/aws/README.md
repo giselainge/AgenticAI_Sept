@@ -87,13 +87,3 @@ Use `-AllowedCidr '203.0.113.10/32'` if automatic IP detection is unavailable. I
 ```
 
 The command empties the temporary bucket, deletes the stack, waits for `stack-delete-complete`, and fails visibly if CloudFormation cannot finish. Check status afterward. CloudFormation cannot delete resources created manually outside this stack.
-
-## Publish the nested project to the ISEG repository
-
-The current Git root is one directory above this project, and `origin` points to `kugguk2022/AgenticAI_Billing_KB-main`. After reviewing and committing all changes, publish only this nested project as the root of an existing empty ISEG repository:
-
-```powershell
-.\deploy\publish_to_iseg.ps1 -TargetRemote "https://github.com/<github-owner>/<repository>.git"
-```
-
-The script refuses a dirty repository, does not force-push, and keeps the old remote. Verify the new repository before archiving the old one. A target URL and GitHub authorization are required; the word “ISEG” alone is not enough to identify a destination repository.

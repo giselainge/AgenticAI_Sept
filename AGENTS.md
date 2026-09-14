@@ -65,8 +65,8 @@ Do not introduce a `src/` layout unless the user explicitly requests it.
 - `vector_store/`: FAISS/LlamaIndex vector-store package for provider-memory retrieval.
 - `docs/workflow_graph.md`: Mermaid workflow diagram showing source, trackable invoice data, local runtime memory, generated outputs, review, tests, logs, and documentation boundaries.
 - `deploy/aws/`: ephemeral CloudFormation/SSM deployment, status, destruction, and operating instructions.
-- `deploy/publish_to_iseg.ps1`: safe nested-subtree publication helper; it must not force-push or publish a dirty worktree.
 - `requirements.txt`: Python dependencies.
+- `requirements-dev.txt`: local test dependencies layered on the runtime requirements.
 - `tests/`: pytest tests and smoke tests.
 - `docs/`: project notes and supporting documentation that are not runtime entry points.
 - `rag/knowledge_base.json`: generated/local persisted provider memory when provider memory exists.
@@ -369,6 +369,8 @@ When editing dashboard code, preserve path safety checks for PDF serving and upl
 ## Docker And API Runtime
 
 `Dockerfile` is a multi-stage, non-root runtime containing required local OCR tools. `docker-compose.yaml` runs the lightweight FastAPI health service on port `8000` and the review dashboard on port `8501` from the same image. Both persist `/app/data` and `/app/runtime`; neither container should write application code. The API is not an OpenAI-compatible inference server.
+
+Deployment is manual for this private college project. Do not add GitOps, pull-request workflows, CI/CD workflows, Vercel configuration, repository deployment hooks, or automatic application releases. Do not create or publish a PR for project changes. AWS scripts must remain explicitly operator-invoked; the scheduled AWS action is limited to deleting the temporary stack.
 
 The AWS deployment under `deploy/aws/` is deliberately ephemeral. It must use an IP-restricted security group, SSM instead of SSH, no uploaded LLM secrets or invoice data, and both scheduled and manual stack-deletion paths. It deploys the invoice application only, not the historical Qwen GPU endpoint. Do not claim an AWS deployment passed unless it was run with an authenticated profile and its stack deletion was verified.
 
