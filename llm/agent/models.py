@@ -166,32 +166,18 @@ class LlmJudgeResult(BaseModel):
 
 class FourCaseFieldDecision(BaseModel):
     field: str
-    winner: Literal[
-        "ocr_rules",
-        "ocr_llm",
-        "ocr_agentic",
-        "ocr_llm_agentic",
-        "tie",
-        "unverifiable",
-    ]
+    winner: Literal["ocr_llm", "ocr_llm_agentic", "tie", "unverifiable"]
     reason: str
 
 
 class FourCaseJudgeResult(BaseModel):
-    """Advisory ranking of the four extraction configurations."""
+    """Advisory ranking of the two retained A/B configurations."""
 
     status: Literal["completed", "unavailable", "failed"]
     provider: Literal["gemini", "openai", "openai_compatible"] | None = None
     model: str | None = None
     evidence_scope: Literal["ocr_text"] = "ocr_text"
-    best_case: Literal[
-        "ocr_rules",
-        "ocr_llm",
-        "ocr_agentic",
-        "ocr_llm_agentic",
-        "tie",
-        "inconclusive",
-    ] = "inconclusive"
+    best_case: Literal["ocr_llm", "ocr_llm_agentic", "tie", "inconclusive"] = "inconclusive"
     scores: dict[str, float] = Field(default_factory=dict)
     confidence: float | None = Field(default=None, ge=0, le=1)
     summary: str = ""
