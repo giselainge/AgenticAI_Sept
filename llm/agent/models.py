@@ -7,15 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from invoice_parser.schema import FIELDNAMES, NULL_VALUE
 
-from dotenv import load_dotenv
-import os
-
-# Carrega as variáveis do arquivo .env
-load_dotenv()
-DEFAULT_MODEL = os.getenv('GEMINI_MODEL')
-
-
-
+DEFAULT_MODEL = "gemini-3.5-flash"
 
 InvoiceType = Literal["electricity", "water", "natural gas", "telecom", "unsupported"]
 ReviewStatus = Literal["manual_review_required", "ready_for_review"]

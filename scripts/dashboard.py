@@ -6,7 +6,7 @@ import html
 import json
 import re
 import sys
-import uuid 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from email.parser import BytesParser
@@ -1759,7 +1759,7 @@ def process_imported_files(
                 update_batch_item(job_id, item_index, "error", "OCR dependency missing.")
         return [], [
             f"OCR import dependency is missing: {missing_module}. "
-            "Install project requirements with the same Python used to run the dashboard."
+            "Run `uv sync --frozen` and start the dashboard with `uv run`."
         ]
     except Exception as exc:
         if job_id:

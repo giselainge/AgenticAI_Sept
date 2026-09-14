@@ -1,14 +1,14 @@
 from __future__ import annotations
-from dotenv import load_dotenv
-import os
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
-# Carrega as variáveis do arquivo .env
+from dotenv import load_dotenv
+
 load_dotenv()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -30,8 +30,7 @@ from invoice_parser.schema import FIELDNAMES, NULL_VALUE
 from invoice_parser.text_utils import normalize_money, normalize_space
 
 
-# DEFAULT_MODEL = "gemini-3.5-flash"
-DEFAULT_MODEL = os.getenv('GEMINI_MODEL')
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip() or "gemini-3.5-flash"
 
 VALID_INVOICE_TYPES = {"electricity", "water", "natural gas", "telecom", "unsupported"}
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -180,8 +179,8 @@ def _call_gemini_with_sdk(
         from google.genai import types
     except ImportError as exc:
         raise RuntimeError(
-            "Google Gemini SDK is not installed. Install `google-genai` with "
-            "`python -m pip install -r requirements.txt`, then retry the dashboard Gemini pass."
+            "Google Gemini SDK is not installed. Run `uv sync --frozen` "
+            "and retry the dashboard Gemini pass."
         ) from exc
 
     if pdf_file is None:

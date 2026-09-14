@@ -11,16 +11,20 @@ DEFAULT_OUTPUT_DIR = DATA_ROOT / "data_processed"
 DEFAULT_REPORTS_DIR = DEFAULT_OUTPUT_DIR / "reports"
 DEFAULT_LLM_SECOND_PASS_DIR = DEFAULT_OUTPUT_DIR / "llm_second_pass"
 DEFAULT_AGENTIC_AB_DIR = DEFAULT_OUTPUT_DIR / "agentic_ab_tests"
-DEFAULT_VECTOR_STORE_DIR = Path(os.getenv("VECTOR_STORE_DIR", str(DEFAULT_OUTPUT_DIR / "vector_store")))
+DEFAULT_VECTOR_STORE_DIR = Path(
+    os.getenv("VECTOR_STORE_DIR", str(DEFAULT_OUTPUT_DIR / "vector_store"))
+).expanduser()
 
 
 def project_data_root() -> Path:
     """Resolve the repo's data root while keeping older data/data layouts usable."""
+    configured_root = os.getenv("INVOICE_DATA_ROOT")
+    if configured_root:
+        return Path(configured_root).expanduser()
+
     candidates = [
         PROJECT_ROOT / "data" / "data",
         PROJECT_ROOT / "data",
-        Path("data/data"),
-        Path("data"),
     ]
     for candidate in candidates:
         if candidate.exists():

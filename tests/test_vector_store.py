@@ -90,5 +90,23 @@ def test_vector_store_dependency_error_is_actionable(monkeypatch) -> None:
     else:  # pragma: no cover - only possible when the monkeypatch fails.
         raise AssertionError("Expected VectorStoreDependencyError")
 
-    assert "python -m pip install -r requirements.txt" in message
-    assert "HuggingFace embedding model" in message
+    assert "uv sync --frozen" in message
+
+
+def test_local_embedding_is_stable_and_uses_no_model_download() -> None:
+    import torch
+
+    class FakeBaseEmbedding:
+        def __init__(self, **values):
+            for key, value in values.items():
+                setattr(self, key, value)
+
+    from vector_store.base import _embedding_class
+
+    embedding = _embedding_class(FakeBaseEmbedding, torch)(dimension=64, device="cpu")
+    first = embedding._get_text_embedding("EPAL water invoice total")
+    second = embedding._get_query_embedding("EPAL water invoice total")
+
+    assert first == second
+    assert len(first) == 64
+    assert abs(sum(value * value for value in first) - 1.0) < 1e-5

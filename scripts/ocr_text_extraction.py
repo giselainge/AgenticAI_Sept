@@ -132,22 +132,22 @@ REPORTS_DIR = PROCESSED_DIR / "reports"
 
 def configure_local_ocr_environment() -> None:
     """Make freshly installed local OCR tools visible to this Python process."""
+    program_files = Path(os.environ.get("ProgramFiles", "C:/Program Files"))
     candidate_path_dirs = [
-        Path.home() / "AppData" / "Roaming" / "Python" / "Python314" / "Scripts",
         Path.home() / "AppData" / "Local" / "Programs" / "Tesseract-OCR",
         Path.home() / "Tesseract-OCR",
-        Path("C:/Program Files/Tesseract-OCR"),
-        Path("C:/Program Files/qpdf 12.3.2/bin"),
+        program_files / "Tesseract-OCR",
     ]
+    candidate_path_dirs.extend(path / "bin" for path in program_files.glob("qpdf*"))
     existing_dirs = [str(path) for path in candidate_path_dirs if path.exists()]
-    current_paths = [part for part in (os.environ.get("PATH") or "").split(";") if part]
+    current_paths = [part for part in (os.environ.get("PATH") or "").split(os.pathsep) if part]
 
     for directory in existing_dirs:
         if directory not in current_paths:
             current_paths.append(directory)
 
     if existing_dirs:
-        os.environ["PATH"] = ";".join(current_paths)
+        os.environ["PATH"] = os.pathsep.join(current_paths)
 
     user_tessdata = Path.home() / "AppData" / "Roaming" / "Tesseract-OCR" / "tessdata"
     if user_tessdata.exists() and not os.environ.get("TESSDATA_PREFIX"):
@@ -158,7 +158,7 @@ def configure_local_ocr_environment() -> None:
         Path(tesseract_cmd) if tesseract_cmd else None,
         Path.home() / "AppData" / "Local" / "Programs" / "Tesseract-OCR" / "tesseract.exe",
         Path.home() / "Tesseract-OCR" / "tesseract.exe",
-        Path("C:/Program Files/Tesseract-OCR/tesseract.exe"),
+        program_files / "Tesseract-OCR" / "tesseract.exe",
     ]
     for candidate in candidate_executables:
         if candidate and candidate.exists():
@@ -207,9 +207,25 @@ def write_text_file(path: Path, text: str) -> str:
 
 
 def extract_pdf_text_pages(pdf_path: Path) -> tuple[str, list[str]]:
-    fitz = import_fitz()
-    page_texts: list[str] = []
+    try:
+        fitz = import_fitz()
+    except RuntimeError as fitz_error:
+        if shutil.which("pdftotext") is None:
+            raise fitz_error
+        completed = subprocess.run(
+            ["pdftotext", "-layout", str(pdf_path), "-"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or "").strip()
+            raise RuntimeError(f"pdftotext could not extract PDF text: {detail}") from fitz_error
+        page_texts = completed.stdout.split("\f")
+        return "\n\n".join(page_texts), page_texts
 
+    page_texts: list[str] = []
     try:
         with fitz.open(pdf_path) as doc:
             for page in doc:
@@ -232,12 +248,12 @@ def has_pdf_text_layer(pdf_path: str | Path, min_chars: int = 30) -> bool:
 
 def image_to_pdf(image_path: Path, output_pdf: Path) -> Path:
     """OCRmyPDF expects PDFs; PyMuPDF can locally wrap most images as PDFs."""
-    fitz = import_fitz()
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     if output_pdf.exists():
         output_pdf.unlink()
 
     try:
+        fitz = import_fitz()
         image_doc = fitz.open(image_path)
         pdf_bytes = image_doc.convert_to_pdf()
         image_doc.close()
@@ -897,6 +913,41 @@ def process_file(
 
     result.requires_ocr = True
     result.warnings.extend(tool_missing_warnings())
+
+    if source.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS and shutil.which("ocrmypdf") is None:
+        try:
+            from PIL import Image
+
+            available_languages = set(pytesseract.get_languages(config=""))
+            languages = "+".join(language for language in ("por", "eng") if language in available_languages)
+            with Image.open(source) as image:
+                raw_text = pytesseract.image_to_string(image, lang=languages or None)
+            cleaned = clean_text(raw_text)
+            quality = score_ocr_quality(cleaned, [cleaned])
+            selected_pass = build_ocr_pass_result(
+                "tesseract_image",
+                source,
+                input_pdf,
+                raw_text,
+                [cleaned],
+                output_dirs["text"],
+            )
+            write_text_file(
+                selected_path,
+                selected_text_output(source, "tesseract_image", quality, "tesseract_image", cleaned),
+            )
+            result.extraction_method = "tesseract_image"
+            result.selected_text = cleaned
+            result.selected_text_file = str(selected_path)
+            result.searchable_pdf = str(input_pdf)
+            result.baseline = selected_pass
+            result.quality_score = float(quality.get("score", 0.0))
+            update_review_flags(result, quality)
+            return result
+        except Exception as exc:
+            result.errors.append(f"Direct Tesseract image OCR failed: {exc}")
+            update_review_flags(result, {})
+            return result
 
     work_dir = output_dirs["processed"] / "_ocr_work"
     work_dir.mkdir(parents=True, exist_ok=True)

@@ -2,27 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import scripts.second_pass_llm as second_pass_module
 from scripts.second_pass_llm import (
+    DEFAULT_MODEL,
     build_gemini_prompt,
     normalize_structured_output,
     parse_model_text,
     second_pass_extract,
 )
-import scripts.second_pass_llm as second_pass_module
 from llm.agent.models import GeminiPromptContext, NormalizedInvoiceExtraction, RagSnippet
 from llm.api.schemas import SecondPassExtractRequest
 from rag.adaptive_rag import record_review_corrections
-
-from dotenv import load_dotenv
-import os
-
-# Carrega as variáveis do arquivo .env
-load_dotenv()
-
-DEFAULT_MODEL = os.getenv('GEMINI_MODEL')
-
-
-
 
 def test_prompt_includes_ocr_schema_and_rag_tip() -> None:
     prompt = build_gemini_prompt(
@@ -203,7 +193,6 @@ def test_default_second_pass_uses_builtin_gemini_sdk_caller(monkeypatch, tmp_pat
     result = second_pass_extract(
         pdf_file=pdf_path,
         api_key="fake-dashboard-key",
-        #model="gemini-3.5-flash",
         model=DEFAULT_MODEL,
         output_dir=tmp_path,
     )
@@ -211,7 +200,6 @@ def test_default_second_pass_uses_builtin_gemini_sdk_caller(monkeypatch, tmp_pat
     assert result.used
     assert seen == {
         "api_key": "fake-dashboard-key",
-        #"model": "gemini-3.5-flash",
         "model": DEFAULT_MODEL,
         "pdf_file": pdf_path,
     }

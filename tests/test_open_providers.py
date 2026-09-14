@@ -1,7 +1,6 @@
 """Synthetic bills only: no customer data, OCR executables, or external API calls."""
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -85,33 +84,13 @@ def test_new_providers_keep_separate_feedback_and_retrieval(tmp_path):
         "previously_validated_invoices": [{"valid_invoice": "true"}] * 5}}}, "unknown") == 0
 
 
-def test_wrong_provider_vector_hits_fall_back_to_own_json_memory(tmp_path, monkeypatch):
+def test_llm_snippets_use_only_the_identified_providers_json_memory(tmp_path):
     kb_path = tmp_path / "kb.json"
     record_review_corrections({"provider_name": "Águas da Vila"},
                              {"total_value": ("null", "10.00")}, "Own supplier guidance", kb_path)
-    monkeypatch.setattr("vector_store.base.retrieve_provider_memory_docs", lambda **kwargs: [
-        {"text": "Wrong supplier guidance", "metadata": {"provider_id": "epal"}, "score": 1.0}
-    ])
+    record_review_corrections({"provider_name": "EPAL"},
+                             {"total_value": ("null", "99.00")}, "Other supplier guidance", kb_path)
     snippets = build_llm_rag_snippets("Fatura água", "Águas da Vila", "water", kb_path=kb_path)
     assert snippets
-    assert all("Wrong supplier" not in item.text for item in snippets)
+    assert all("Other supplier" not in item.text for item in snippets)
     assert any("Own supplier guidance" in item.text for item in snippets)
-
-
-def test_vector_retrieval_filters_by_provider_and_does_not_build_missing_index(tmp_path, monkeypatch):
-    import vector_store.base as vector
-
-    monkeypatch.setattr(vector, "_INDEX_CACHE", None)
-    def unexpected_build(**kwargs):
-        pytest.fail("Read-only retrieval must not build an absent index")
-    monkeypatch.setattr(vector, "build_index", unexpected_build)
-    assert vector.retrieve_provider_memory_docs("Water", "New Supplier", index_path=tmp_path) == []
-
-    (tmp_path / "default__vector_store.json").write_text("{}")
-    nodes = [SimpleNamespace(text="memory", metadata={"provider_id": key})
-             for key in ["epal", canonical_provider("New Supplier")]]
-    retriever = SimpleNamespace(retrieve=lambda query: nodes)
-    monkeypatch.setattr(vector, "build_index", lambda **kwargs: SimpleNamespace(as_retriever=lambda **kw: retriever))
-    hits = vector.retrieve_provider_memory_docs("Water", "New Supplier", index_path=tmp_path)
-    assert len(hits) == 1
-    assert hits[0]["metadata"]["provider_id"] == canonical_provider("New Supplier")

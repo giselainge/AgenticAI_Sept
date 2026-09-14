@@ -1,9 +1,9 @@
 ﻿# A. About this project / Invoice Parser Agent
 
 AI-assisted invoice parser for utility and telecom invoices.
-The project combines local OCR, deterministic field extraction, provider-specific RAG memory, a Gemini PDF second pass and a local dashboard for human review.
+The project combines local OCR, deterministic field extraction, provider-specific RAG memory, an agentic A/B workflow, a local Gradio lab, a Gemini PDF second pass, and a review dashboard.
 
-This documment is organized in these sections:
+This document is organized in these sections:
 A. About project
 B. Setup
 C. Execution
@@ -29,8 +29,8 @@ See [the assessment requirements review](docs/requirements_review.md) for implem
 ```text
 |-- AGENTS.md
 |-- README.md
-|-- requirements.txt
-|-- requirements-dev.txt
+|-- pyproject.toml
+|-- uv.lock
 |-- .env.example
 |-- .gitignore
 |-- .dockerignore
@@ -43,6 +43,7 @@ See [the assessment requirements review](docs/requirements_review.md) for implem
 |       |-- destroy.ps1
 |       |-- ephemeral-stack.yaml
 |-- scripts/
+|   |-- gradio_app.py
 |   |-- dashboard.py
 |   |-- ocr_text_extraction.py
 |   |-- extract_invoice_fields.py
@@ -60,13 +61,13 @@ See [the assessment requirements review](docs/requirements_review.md) for implem
 |   |   |-- prompts.py
 |   |-- api/
 |   |   |-- schemas.py
-|-- vector_store/
-|   |-- base.py
-|   |-- documents.py
 |-- rag/
 |   |-- adaptive_rag.py
 |   |-- knowledge_base.json              (generated/local, when provider memory exists)
 |   |-- last_retrieval_context.json      (generated/local, when retrieval is exported)
+|-- vector_store/
+|   |-- base.py                          (local Torch embedding + FAISS/LlamaIndex)
+|   |-- documents.py
 |-- tests/
 |   |-- test_shared_utils.py
 |   |-- test_second_pass.py
@@ -78,31 +79,29 @@ See [the assessment requirements review](docs/requirements_review.md) for implem
 |       |-- invoice_structured_fields.csv
 |       |-- reports/
 |       |-- llm_second_pass/
-|       |-- vector_store/
 ```
 
 Folder description:
-- `scripts/`: runnable entry-point scripts for the dashboard, OCR, and deterministic extraction.
-- `data/data_raw/`: original uploaded invoices waitinting to be processed. Do not overwrite existing files. This folder is trackable, so review invoice contents before committing.
+- `scripts/`: runnable entry-point scripts for Gradio, the review dashboard, OCR, extraction, and A/B testing.
+- `data/data_raw/`: original uploaded invoices waiting to be processed. Do not overwrite existing files or commit invoice data.
 - `data/data_pdf/`: canonical/searchable PDFs generated or copied by OCR processing.
 - `data/data_txt/`: selected OCR text and diagnostics.
 - `data/data_processed/`: structured CSV, reports, and generated outputs.
 - `data/data_processed/llm_second_pass/`: Gemini raw TXT and normalized JSON outputs.
-- `data/data_processed/vector_store/`: generated FAISS/LlamaIndex provider-memory index.
-- `rag/`: provider memory adapter and retrieval utilities.
+- `rag/`: provider memory adapter and provider-scoped retrieval utilities.
+- `vector_store/`: FAISS/LlamaIndex indexing with a deterministic Torch embedding; it does not use or download Hugging Face models.
 - `llm/`: typed LLM models, prompt templates, and request/response schemas.
-- `vector_store/`: local vector-store builder and provider-memory document conversion.
 - `invoice_parser/`: shared schema, paths, and normalization helpers used by the pipeline entry points.
 - `docs/`: supporting project notes.
 
 Notes:
-- The `data/` tree is intentionally trackable in this repository. A fresh checkout contains shared invoice data only when it has been committed; otherwise the pipeline creates generated output folders as needed.
+- The `data/` tree is ignored because invoices and generated extraction artifacts can contain private customer information. The pipeline creates its folders locally as needed.
 
 
 
 ## Workflow visualization:
 
-- [docs/workflow_graph.md](docs/workflow_graph.md) shows the project pipeline and the boundary between trackable invoice data, local runtime memory, source code, generated outputs, tests, logs, and documentation.
+- [docs/workflow_graph.md](docs/workflow_graph.md) shows the project pipeline and the boundary between private local invoice data, runtime memory, source code, generated outputs, tests, logs, and documentation.
 
 
 ## LLM module structure
@@ -112,9 +111,7 @@ It includes:
 - `llm/agent/models.py`: typed prompt, payload, normalized extraction, and runtime result models.
 - `llm/agent/prompts.py`: prompt templates.
 - `llm/api/schemas.py`: typed request/output schemas for API-style integrations.
-- `vector_store/base.py`: FAISS/LlamaIndex vector index factory in the same style as `Agenti-AI-main`.
-- `vector_store/documents.py`: converts local provider memory into vector-store documents.
-- `rag/adaptive_rag.py`: provider memory adapter; retrieves vector hits and converts them into `llm.agent.models.RagSnippet` objects for Gemini prompts.
+- `rag/adaptive_rag.py`: retrieves provider-specific tips and approved reviewer feedback from the local JSON memory and converts them into `llm.agent.models.RagSnippet` objects.
 
 
 
@@ -131,9 +128,9 @@ mkdir C:\Users\<Your-User>\Documents\AgenticAI_Billing_KN
 cd C:\Users\<Your-User>\Documents\AgenticAI_Billing_KN
 ```
 
-2. If you do not have `uv`, install it:
-```bash
-pip install uv
+2. If you do not have `uv`, install it with WinGet:
+```powershell
+winget install --id=astral-sh.uv -e
 ```
 
 3. Clone the project:
@@ -142,26 +139,20 @@ git clone <repository-url> .
 
 ```
 
-4. Create and activate the virtual environment:
+4. Create the project environment and install the locked runtime and test dependencies:
 ```bash
-uv venv .venv
-.venv\Scripts\activate
+uv sync --frozen
 ```
 
-5. Install runtime and test dependencies:
-```bash
-uv pip install -r requirements-dev.txt
-```
-
-6. Local OCR requires Tesseract and OCRmyPDF runtime tools available on PATH.
+5. Local OCR requires Tesseract and OCRmyPDF runtime tools available on PATH.
 On Windows, import Tesseract with:
 ```bash
-python -c "import pytesseract; print(pytesseract.get_tesseract_version())"
+uv run python -c "import pytesseract; print(pytesseract.get_tesseract_version())"
 ```
 
 ## Gemini Configuration
 
-A GEMINI_API_KEY is needed to execute code and dashboard.
+A Gemini API key is needed only for Gemini extraction. OCR, deterministic extraction, the dashboard, and mocked tests run without one.
 If you don't have one, register on https://aistudio.google.com/ and create your own key (Free).
 
 For command-line use, set:
@@ -172,32 +163,50 @@ $env:GEMINI_MODEL="gemini-3.5-flash"
 
 Notes:
 - The dashboard also has a GEMINI_API_KEY field in **Import Invoices**. It is used only for to import request and is not saved.
-- Gemini PDF extraction uses the optional `google-genai` SDK from `requirements.txt`.
+- Gemini PDF extraction uses the locked `google-genai` dependency declared in `pyproject.toml`.
 - Tests continue to use mocked callers and do not call the real API.
 
 
 
 # C. Execution
-Process has 2 steps:
-1. Batch processing to extract text from file(s) (ocr);
-2. Dashboard operation.
+
+The simplest local test is the Gradio A/B lab. The batch commands and full review dashboard remain available for deeper testing.
+
+## Local Gradio A/B lab
+
+Start the loopback-only server:
+
+```powershell
+uv run python scripts\gradio_app.py
+```
+
+Open [http://127.0.0.1:7860](http://127.0.0.1:7860). Upload an invoice PDF or image; the app runs the OCR stage automatically. The interface shows Plan A and Plan B side by side, the five Plan B agent events, comparison metrics, the local provider knowledge base, a FAISS index rebuild action, and a human verdict control.
+
+This interface always passes an empty API key to Plan B, so it cannot call Gemini. Plan B still runs classification, provider-memory retrieval, deterministic fallback extraction, validation, and review routing. Use the existing CLI or review dashboard later when an external Gemini comparison is explicitly wanted.
+
+The server rejects non-loopback host arguments and launches with Gradio sharing disabled.
+
+The batch workflow has two steps:
+
+1. Batch processing to extract text from files with OCR.
+2. Full dashboard review.
 
 
 ## 1. Step-by-step batch processing to extract text from file(s)
 
-### 1.1 OCR text extratction processes all files in `data/data_raw/`.
-New invoices can be added manualy to folder ./data/data_raw/` by yourself.
+### 1.1 OCR text extraction processes all files in `data/data_raw/`.
+New invoices can be added manually to `data/data_raw/`.
 Dashboard can also be used to import invoices before running OCR.
 Note:
 - The dashboard import flow processes an existing raw file with the same name instead of overwriting it.
 
 ```bash
-python scripts\ocr_text_extraction.py
+uv run python scripts\ocr_text_extraction.py
 ```
 
 Note: OCR process for one file only. Example:
 ```bash
-python scripts\ocr_text_extraction.py --input data\data_raw\agua_01.webp
+uv run python scripts\ocr_text_extraction.py --input data\data_raw\agua_01.webp
 ```
 
 Note: The OCR command skips work when the final selected text file already exists.
@@ -206,26 +215,17 @@ Note: The OCR command skips work when the final selected text file already exist
 
 ### 1.2 Extract structured fields from OCR output text file:
 ```bash
-python scripts\extract_invoice_fields.py
+uv run python scripts\extract_invoice_fields.py
 ```
 
 ### 1.3 Refresh provider memory from the structured CSV:
 ```bash
-python rag\adaptive_rag.py init
+uv run python rag\adaptive_rag.py init
 ```
 
-### 1.4 Build or refresh the local provider-memory vector index:
+### 1.4 Run Gemini PDF 2nd pass for one invoice:
 ```bash
-python rag\adaptive_rag.py index
-```
-Note:
-- The first vector-index build may need to download the configured HuggingFace embedding model. Do not run it during tests or quality checks unless you explicitly want generated index files.
-
-
-### 1.5 Run Gemini PDF 2nd pass for one invoice:
-* FDC pq só duas ?
-```bash
-python scripts\second_pass_llm.py --pdf-file data\data_pdf\telecom_05.pdf --text-file data\data_txt\telecom_05.txt --provider vodafone --invoice-type telecom
+uv run python scripts\second_pass_llm.py --pdf-file data\data_pdf\telecom_05.pdf --text-file data\data_txt\telecom_05.txt --provider vodafone --invoice-type telecom
 ```
 
 Gemini outputs are written with fixed filenames, for example:
@@ -242,7 +242,7 @@ The raw Gemini response is plain TXT; the structured artifact remains JSON for d
 
 Start the dashboard:
 ```bash
-python scripts\dashboard.py
+uv run python scripts\dashboard.py
 ```
 
 Open:
@@ -298,7 +298,7 @@ Run Plan B from the Manual Review page, or from PowerShell:
 
 ```powershell
 $env:GEMINI_API_KEY="your-real-key"
-python scripts\agentic_ab_test.py --text-file data\data_txt\agua_01.txt --pdf-file data\data_pdf\agua_01.pdf
+uv run python scripts\agentic_ab_test.py --text-file data\data_txt\agua_01.txt --pdf-file data\data_pdf\agua_01.pdf
 ```
 
 Without a PDF/API key, the CLI still records the orchestration trace but the extraction agent explicitly retains the deterministic result, so it is not a meaningful model comparison.
@@ -310,7 +310,7 @@ Without a PDF/API key, the CLI still records the orchestration trace but the ext
 
 For test purpose run the current test suite:
 ```bash
-python -m pytest tests
+uv run pytest
 ```
 
 The tests mock Gemini API calls and do not call the real API.
@@ -322,11 +322,10 @@ The tests mock Gemini API calls and do not call the real API.
 - Keep `.env` ignored.
 - Keep `.env.example` as placeholders only.
 - Keep `.gitignore` active so local caches, logs, environments, secrets, and runtime RAG memory are not committed accidentally.
-- The `data/` folders are no longer ignored. Commit invoice data and generated outputs only after reviewing them for private/customer information.
-- Keep generated vector indexes under `data/data_processed/vector_store/` and commit them only when they are intentionally part of the shared dataset.
+- The `data/` tree is ignored. Keep invoice files, OCR outputs, reports, structured rows, and LLM artifacts local.
 - Do not commit real API keys, credentials, or unapproved private invoice data.
 - Do not overwrite raw files in `data/data_raw/`.
-- Historical generated reports may contain old run data; review them before committing.
+- Historical generated reports may contain private or stale data; do not commit them.
 
 ## Known Limitations
 
@@ -334,8 +333,8 @@ The tests mock Gemini API calls and do not call the real API.
 - Some source/OCR text may contain encoding artifacts.
 - Deterministic extraction is regex/heuristic-based.
 - Gemini second pass requires API access, quota, and network availability.
-- Provider memory is stored in JSON and indexed locally into FAISS/LlamaIndex when vector dependencies are installed.
-- Fresh clones contain `data/` only when invoice data has been committed; otherwise local invoice import or pipeline commands create it.
+- Provider memory uses local JSON plus an optional FAISS/LlamaIndex index. Its deterministic Torch feature-hash embedding requires no model repository or model download. Torch uses CUDA automatically when available; FAISS remains the CPU package.
+- Fresh clones do not contain invoice data; local invoice import or pipeline commands create the ignored `data/` tree.
 - Old timestamped Gemini artifacts may exist from earlier development runs.
 
 
@@ -344,12 +343,13 @@ The tests mock Gemini API calls and do not call the real API.
 
 ## Docker And API
 
-The multi-stage Docker image includes Portuguese/English Tesseract, OCRmyPDF runtime tools, a non-root user, a read-only application filesystem, and health checks. Compose runs two services from the same image:
+The multi-stage Docker image includes Portuguese/English Tesseract, OCRmyPDF runtime tools, a non-root user, a read-only application filesystem, and health checks. Compose runs three services from the same image:
 
 - FastAPI health service: `http://127.0.0.1:8000/health`
 - Invoice dashboard: `http://127.0.0.1:8501/`
+- Gradio A/B lab: `http://127.0.0.1:7860/`
 
-Create local writable directories and start both services:
+Create local writable directories and start the services:
 
 ```powershell
 New-Item -ItemType Directory -Force data, runtime
@@ -357,7 +357,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-`data/` holds invoice inputs and generated artifacts. `runtime/` holds ignored provider memory, vector indexes, and model caches. Compose binds both ports to localhost unless `BIND_ADDRESS` is explicitly changed. The API on port 8000 is still a health/root service; it is not an OpenAI-compatible `/v1` model server.
+`data/` holds invoice inputs and generated artifacts. `runtime/` holds ignored provider memory and the generated vector index. Compose binds all ports to localhost unless `BIND_ADDRESS` is explicitly changed. The API on port 8000 is a health/root service; it is not an OpenAI-compatible `/v1` model server.
 
 For the temporary self-deleting EC2 deployment, AWS SSO setup, old endpoint check, and early deletion workflow, see [deploy/aws/README.md](deploy/aws/README.md).
 
@@ -402,9 +402,10 @@ Provider memory is stored in:
 rag/knowledge_base.json
 ```
 
-The vector retrieval index is generated from that provider memory and stored in:
-```text
-data/data_processed/vector_store/
+The generated vector index is stored in `data/data_processed/vector_store/` for direct local runs and `/app/runtime/vector_store/` under Compose. Build or refresh it with:
+
+```powershell
+uv run python rag\adaptive_rag.py index --force
 ```
 
 It can store:
@@ -418,8 +419,7 @@ It can store:
 
 To retrieve context manually run (with example):
 ```bash
-python rag\adaptive_rag.py retrieve --text-file data\data_txt\telecom_05.txt --provider vodafone --invoice-type telecom
+uv run python rag\adaptive_rag.py retrieve --text-file data\data_txt\telecom_05.txt --provider vodafone --invoice-type telecom
 ```
 
-The Gemini second pass asks the vector store for matching provider-memory snippets when OCR text, provider, and invoice type are available. If vector-store dependencies are not installed or the index has not been built, the project falls back to the JSON provider memory so local tests and review can still run.
-# AgenticAI_Billing_KB
+Provider retrieval prefers matching FAISS results and falls back to provider-scoped JSON when an index is absent. The embedding is computed locally with Torch and never applies one supplier's feedback to another supplier.

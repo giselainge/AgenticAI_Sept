@@ -12,6 +12,7 @@ logs/
 runtime/
 rag/knowledge_base.json
 rag/last_retrieval_context.json
+data/
 
 .env
 .venv/

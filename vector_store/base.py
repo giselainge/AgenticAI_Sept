@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +16,7 @@ from vector_store.documents import DOCUMENTS, provider_memory_documents
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
+EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "768"))
 INDEX_SIMILARITY_TOP_K = int(os.getenv("INDEX_SIMILARITY_TOP_K", "3"))
 SENTENCE_SPLITTER_CHUNK_SIZE = int(os.getenv("SENTENCE_SPLITTER_CHUNK_SIZE", "512"))
 SENTENCE_SPLITTER_CHUNK_OVERLAP = int(os.getenv("SENTENCE_SPLITTER_CHUNK_OVERLAP", "64"))
@@ -32,27 +34,63 @@ class VectorStoreDependencyError(RuntimeError):
 def _load_vector_dependencies() -> dict[str, Any]:
     try:
         import faiss
+        import torch
         from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage
+        from llama_index.core.embeddings import BaseEmbedding
         from llama_index.core.node_parser import SentenceSplitter
-        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
         from llama_index.vector_stores.faiss import FaissVectorStore
     except ImportError as exc:
         raise VectorStoreDependencyError(
-            "Vector store dependencies are not installed. Install the FAISS/LlamaIndex "
-            "packages with `python -m pip install -r requirements.txt` before building "
-            "the local index. The first index build may also need access to the "
-            "configured HuggingFace embedding model."
+            "Vector store dependencies are not installed. Run `uv sync --frozen` "
+            "before building the local index."
         ) from exc
 
     return {
         "faiss": faiss,
+        "torch": torch,
+        "BaseEmbedding": BaseEmbedding,
         "StorageContext": StorageContext,
         "VectorStoreIndex": VectorStoreIndex,
         "load_index_from_storage": load_index_from_storage,
         "SentenceSplitter": SentenceSplitter,
-        "HuggingFaceEmbedding": HuggingFaceEmbedding,
         "FaissVectorStore": FaissVectorStore,
     }
+
+
+def _embedding_class(base_embedding: Any, torch_module: Any) -> type:
+    """Create a LlamaIndex embedding backed by deterministic local Torch operations."""
+
+    class LocalHashEmbedding(base_embedding):
+        dimension: int = EMBEDDING_DIMENSION
+        device: str = "cuda" if torch_module.cuda.is_available() else "cpu"
+
+        @classmethod
+        def class_name(cls) -> str:
+            return "local_hash_embedding"
+
+        def _embed(self, text: str) -> list[float]:
+            vector = torch_module.zeros(self.dimension, dtype=torch_module.float32, device=self.device)
+            tokens = re.findall(r"[\w]+", (text or "").casefold(), flags=re.UNICODE)
+            for token in tokens:
+                digest = hashlib.blake2b(token.encode("utf-8"), digest_size=16).digest()
+                index = int.from_bytes(digest[:8], "little") % self.dimension
+                sign = 1.0 if digest[8] & 1 else -1.0
+                vector[index] += sign
+            norm = torch_module.linalg.vector_norm(vector)
+            if norm.item() > 0:
+                vector = vector / norm
+            return vector.detach().cpu().tolist()
+
+        def _get_query_embedding(self, query: str) -> list[float]:
+            return self._embed(query)
+
+        async def _aget_query_embedding(self, query: str) -> list[float]:
+            return self._embed(query)
+
+        def _get_text_embedding(self, text: str) -> list[float]:
+            return self._embed(text)
+
+    return LocalHashEmbedding
 
 
 def _load_kb(kb_path: str | Path) -> dict[str, Any]:
@@ -60,17 +98,6 @@ def _load_kb(kb_path: str | Path) -> dict[str, Any]:
     if not path.exists():
         return {"version": 1, "providers": {}}
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _embedding_dimension(embed_model: Any) -> int:
-    model = getattr(embed_model, "_model", None)
-    if hasattr(model, "get_sentence_embedding_dimension"):
-        return int(model.get_sentence_embedding_dimension())
-    if isinstance(model, (list, tuple)) and len(model) > 1:
-        dimension = getattr(model[1], "word_embedding_dimension", None)
-        if dimension:
-            return int(dimension)
-    return int(os.getenv("EMBEDDING_DIMENSION", "768"))
 
 
 def _index_exists(index_path: Path) -> bool:
@@ -92,7 +119,8 @@ def build_index(
         return _INDEX_CACHE
 
     deps = _load_vector_dependencies()
-    embed_model = deps["HuggingFaceEmbedding"](model_name=EMBEDDING_MODEL)
+    embedding_type = _embedding_class(deps["BaseEmbedding"], deps["torch"])
+    embed_model = embedding_type(dimension=EMBEDDING_DIMENSION)
     index_settings = {
         "embed_model": embed_model,
         "transformations": [
@@ -116,7 +144,7 @@ def build_index(
         logger.info("No vector store built yet. Building from provider memory...")
         kb_documents = documents if documents is not None else provider_memory_documents(_load_kb(kb_path))
         source_documents = kb_documents or DOCUMENTS
-        faiss_index = deps["faiss"].IndexFlatL2(_embedding_dimension(embed_model))
+        faiss_index = deps["faiss"].IndexFlatL2(EMBEDDING_DIMENSION)
         vector_store = deps["FaissVectorStore"](faiss_index=faiss_index)
         storage_context = deps["StorageContext"].from_defaults(vector_store=vector_store)
         index_settings["storage_context"] = storage_context

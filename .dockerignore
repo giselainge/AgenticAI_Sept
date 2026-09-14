@@ -19,6 +19,4 @@ rag/last_retrieval_context.json
 tests
 docs
 deploy
-requirements-dev.txt
 *.md
-uv.lock

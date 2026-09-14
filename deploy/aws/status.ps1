@@ -1,26 +1,33 @@
 [CmdletBinding()]
 param(
-    [string]$Profile = "iseg",
+    [string]$Profile = "billing-demo",
     [string]$Region = "eu-west-1",
-    [string]$StackName = "iseg-agentic-invoice-demo",
-    [string]$OldModelBaseUrl = "http://ec2-108-132-55-75.eu-west-1.compute.amazonaws.com:8000/v1",
+    [string]$StackName = "agentic-invoice-demo",
+    [string]$OldModelBaseUrl = "",
     [switch]$OldEndpointOnly
 )
 
 $ErrorActionPreference = "Continue"
 Set-StrictMode -Version Latest
 
-Write-Host "Checking old Qwen-compatible endpoint without AWS credentials..."
-try {
-    $response = Invoke-RestMethod -Uri "$($OldModelBaseUrl.TrimEnd('/'))/models" -TimeoutSec 8
-    Write-Host "Old endpoint is reachable."
-    $response | ConvertTo-Json -Depth 5
-}
-catch {
-    Write-Host "Old endpoint is not reachable: $($_.Exception.Message)"
+if ($OldModelBaseUrl) {
+    Write-Host "Checking the supplied model endpoint without AWS credentials..."
+    try {
+        $response = Invoke-RestMethod -Uri "$($OldModelBaseUrl.TrimEnd('/'))/models" -TimeoutSec 8
+        Write-Host "Model endpoint is reachable."
+        $response | ConvertTo-Json -Depth 5
+    }
+    catch {
+        Write-Host "Model endpoint is not reachable: $($_.Exception.Message)"
+    }
 }
 
-if ($OldEndpointOnly) { exit 0 }
+if ($OldEndpointOnly) {
+    if (-not $OldModelBaseUrl) {
+        throw "-OldEndpointOnly requires -OldModelBaseUrl."
+    }
+    exit 0
+}
 if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
     Write-Host "AWS CLI v2 is not installed; cloud resource status cannot be checked."
     exit 1

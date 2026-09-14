@@ -47,3 +47,9 @@ The interaction pattern is a **shared-state blackboard with sequential handoffs*
 Only the extraction agent is generative. The other agents provide predictable guardrails around the model. This architecture suits invoices because financial extraction benefits from controlled decisions and auditable validation.
 
 MoA would use several extraction agents to analyze the same invoice independently—for example, a regex agent, a Gemini visual agent, an OCR-text agent, and a provider-layout agent. A judge agent would then compare their candidate fields and resolve disagreements. Plan A and Plan B currently form an A/B experiment, not an MoA ensemble.
+
+## Local Gradio test interface
+
+Run `uv run python scripts\gradio_app.py` and open `http://127.0.0.1:7860`. The interface accepts an invoice PDF or image, runs the built-in OCR pipeline, shows both plan results and the five-agent trace, exposes the provider knowledge base and local FAISS rebuild action, and records the human accuracy verdict in the A/B artifact. It disables external LLM calls and rejects non-loopback host arguments.
+
+The assessment defines electricity, water, natural gas, and telecom as supported invoice categories. The classification and review-routing agents reject documents outside those four categories.

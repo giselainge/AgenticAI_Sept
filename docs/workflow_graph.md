@@ -1,21 +1,21 @@
 # Project Workflow Graph
 
-This diagram shows the intended separation between source code, trackable invoice data, local runtime memory, generated outputs, review state, tests, logs, and documentation. It uses Mermaid syntax and does not require a graph dependency.
+This diagram shows the intended separation between source code, private local invoice data, runtime memory, generated outputs, review state, tests, logs, and documentation. It uses Mermaid syntax and does not require a graph dependency.
 
 ```mermaid
 flowchart TD
     subgraph Source["Source code"]
-        Wrappers["scripts/: dashboard.py, ocr_text_extraction.py, extract_invoice_fields.py"]
-        Scripts["scripts/: dashboard, OCR, deterministic extraction"]
+        Wrappers["scripts/: Gradio, dashboard, OCR, extraction, A/B runner"]
+        Scripts["scripts/: local UI and pipeline entry points"]
         Shared["invoice_parser/: paths, schema, text utilities"]
         LLM["scripts/second_pass_llm.py"]
         LLMTypes["llm/agent + llm/api: typed models, schemas, prompts"]
         RAG["rag/adaptive_rag.py"]
-        VectorStore["vector_store/: FAISS/LlamaIndex index builder"]
+        VectorStore["vector_store/: local Torch embedding + FAISS/LlamaIndex"]
         PlanB["llm/agent/workflow.py: coded-agent Plan B"]
     end
 
-    subgraph InvoiceData["Trackable invoice data"]
+    subgraph InvoiceData["Private local invoice data"]
         Raw["data/data_raw/ (raw inputs)"]
     end
 
@@ -25,8 +25,8 @@ flowchart TD
         CSV["data/data_processed/invoice_structured_fields.csv"]
         Reports["data/data_processed/reports/"]
         Gemini["data/data_processed/llm_second_pass/"]
-        VectorIndex["data/data_processed/vector_store/"]
         ABArtifact["data/data_processed/agentic_ab_tests/"]
+        VectorIndex["data/data_processed/vector_store/"]
     end
 
     subgraph LocalMemory["Ignored local runtime memory"]
@@ -35,6 +35,7 @@ flowchart TD
 
     subgraph Review["Human review and approval"]
         Dashboard["Local dashboard"]
+        Gradio["Local Gradio A/B lab"]
         ManualReview["Manual Review"]
         Corrections["Reviewer corrections"]
         Export["CSV/provider memory export"]
@@ -44,7 +45,7 @@ flowchart TD
         Tests["tests/"]
         Logs["*.log and logs/"]
         Docs["README.md, AGENTS.md, docs/"]
-        Config[".env.example, .gitignore, requirements.txt"]
+        Config[".env.example, .gitignore, pyproject.toml, uv.lock"]
     end
 
     Wrappers --> Scripts
@@ -62,15 +63,18 @@ flowchart TD
     PDF --> LLM
     TXT --> LLM
     RAG --> LLM
-    VectorStore --> RAG
+    Memory --> RAG
     Memory --> VectorStore
     VectorStore --> VectorIndex
+    VectorStore --> RAG
     TXT --> PlanB
     PDF --> PlanB
     RAG --> PlanB
     PlanB --> ABArtifact
     CSV -. "Plan A snapshot" .-> ABArtifact
     ABArtifact --> Dashboard
+    ABArtifact --> Gradio
+    PlanB --> Gradio
     ManualReview -->|"A/B accuracy verdict"| ABArtifact
     LLM --> Gemini
     CSV --> Dashboard
@@ -91,8 +95,8 @@ flowchart TD
 
 Safety boundaries:
 
-- Treat `data/data_raw/` as immutable input. The `data/` tree is trackable, so review invoice contents before committing.
-- Write generated OCR, PDF, CSV, report, Gemini, and vector artifacts only under `data/`.
+- Treat `data/data_raw/` as immutable input. The ignored `data/` tree stays local because invoices and generated artifacts may contain private information.
+- Write generated OCR, PDF, CSV, report, Gemini, A/B, and vector-index artifacts only under `data/`.
 - Keep provider memory in `rag/knowledge_base.json`; it may contain reviewer feedback and should remain ignored unless sanitized.
-- Treat `data/data_processed/vector_store/` as a generated local retrieval index built from provider memory.
+- Provider-memory retrieval uses a deterministic local Torch embedding with FAISS/LlamaIndex; it does not download an embedding model.
 - Keep secrets and unapproved private invoice data out of logs, docs, generated reports, and committed files.

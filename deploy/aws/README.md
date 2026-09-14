@@ -18,28 +18,22 @@ No Gemini key is uploaded. Enter a temporary key in the dashboard when running G
 Install AWS CLI v2, then configure an IAM Identity Center profile:
 
 ```powershell
-aws configure sso --profile iseg
+aws configure sso --profile billing-demo
 ```
 
-Use the start URL supplied for the account:
+Enter the access-portal URL supplied for the account when prompted:
 
 ```text
-https://d-90661657fb.awsapps.com/start/#/
+https://<directory-id>.awsapps.com/start
 ```
 
-AWS CLI configuration expects the start URL without the fragment (`#/`):
-
-```text
-https://d-90661657fb.awsapps.com/start
-```
-
-The SSO region, AWS account, and permission-set role cannot be inferred from the start URL. Select the values assigned by ISEG. The role needs permission to manage the CloudFormation resources declared in `ephemeral-stack.yaml` and to call SSM Run Command.
+AWS CLI configuration expects the URL without the browser fragment (`#/`). The SSO region, AWS account, and permission-set role cannot be inferred from the URL. Select the assigned values. The role needs permission to manage the CloudFormation resources declared in `ephemeral-stack.yaml` and to call SSM Run Command.
 
 Authenticate before deployment:
 
 ```powershell
-aws sso login --profile iseg
-aws sts get-caller-identity --profile iseg
+aws sso login --profile billing-demo
+aws sts get-caller-identity --profile billing-demo
 ```
 
 An SSO/browser or device-code login is unavoidable: code cannot obtain permission from the portal URL alone.
@@ -49,7 +43,7 @@ An SSO/browser or device-code login is unavoidable: code cannot obtain permissio
 This reachability check needs no AWS credentials:
 
 ```powershell
-.\deploy\aws\status.ps1 -OldEndpointOnly
+.\deploy\aws\status.ps1 -OldEndpointOnly -OldModelBaseUrl "http://<old-host>:8000/v1"
 ```
 
 A timeout only proves that the public model endpoint is unavailable. It cannot distinguish a stopped instance, changed IP/DNS name, security-group block, or stopped model server. Authenticated EC2 access is required for that diagnosis.
@@ -59,7 +53,7 @@ A timeout only proves that the public model endpoint is unavailable. It cannot d
 From the project root:
 
 ```powershell
-.\deploy\aws\deploy.ps1 -Profile iseg -Region eu-west-1 -Hours 3
+.\deploy\aws\deploy.ps1 -Profile billing-demo -Region eu-west-1 -Hours 3
 ```
 
 The script:
@@ -77,13 +71,13 @@ Use `-AllowedCidr '203.0.113.10/32'` if automatic IP detection is unavailable. I
 ## Check status
 
 ```powershell
-.\deploy\aws\status.ps1 -Profile iseg -Region eu-west-1
+.\deploy\aws\status.ps1 -Profile billing-demo -Region eu-west-1
 ```
 
 ## Delete early and verify deletion
 
 ```powershell
-.\deploy\aws\destroy.ps1 -Profile iseg -Region eu-west-1
+.\deploy\aws\destroy.ps1 -Profile billing-demo -Region eu-west-1
 ```
 
 The command empties the temporary bucket, deletes the stack, waits for `stack-delete-complete`, and fails visibly if CloudFormation cannot finish. Check status afterward. CloudFormation cannot delete resources created manually outside this stack.

@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$Profile = "iseg",
+    [string]$Profile = "billing-demo",
     [string]$Region = "eu-west-1",
-    [string]$StackName = "iseg-agentic-invoice-demo",
+    [string]$StackName = "agentic-invoice-demo",
     [ValidateRange(1, 12)][int]$Hours = 3,
     [ValidateSet("t3.large", "t3.xlarge")][string]$InstanceType = "t3.large",
     [string]$AllowedCidr = ""
@@ -79,7 +79,7 @@ try {
             --exclude="rag/knowledge_base.json" `
             --exclude="rag/last_retrieval_context.json" `
             --exclude="*/__pycache__" `
-            .dockerignore Dockerfile requirements.txt invoice_parser llm rag scripts vector_store
+            .dockerignore Dockerfile pyproject.toml uv.lock invoice_parser llm rag scripts vector_store
         if ($LASTEXITCODE -ne 0) { throw "Application packaging failed." }
     }
     finally {
@@ -111,8 +111,8 @@ try {
         "cd /opt/billing/app",
         "docker build --pull --tag agentic-ai-billing-agent:demo .",
         "docker rm -f billing-api billing-dashboard 2>/dev/null || true",
-        "docker run -d --name billing-api --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --tmpfs /tmp:rw,nosuid,nodev,size=512m -p 8000:8000 -e INVOICE_DATA_ROOT=/app/data -e RAG_KB_PATH=/app/runtime/knowledge_base.json -e VECTOR_STORE_DIR=/app/runtime/vector_store -e HF_HOME=/app/runtime/huggingface -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime agentic-ai-billing-agent:demo",
-        "docker run -d --name billing-dashboard --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --tmpfs /tmp:rw,nosuid,nodev,size=512m -p 8501:8501 -e INVOICE_DATA_ROOT=/app/data -e RAG_KB_PATH=/app/runtime/knowledge_base.json -e VECTOR_STORE_DIR=/app/runtime/vector_store -e HF_HOME=/app/runtime/huggingface -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime agentic-ai-billing-agent:demo python scripts/dashboard.py --host 0.0.0.0 --port 8501",
+        "docker run -d --name billing-api --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --tmpfs /tmp:rw,nosuid,nodev,size=512m -p 8000:8000 -e INVOICE_DATA_ROOT=/app/data -e RAG_KB_PATH=/app/runtime/knowledge_base.json -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime agentic-ai-billing-agent:demo",
+        "docker run -d --name billing-dashboard --restart unless-stopped --read-only --security-opt no-new-privileges --cap-drop ALL --tmpfs /tmp:rw,nosuid,nodev,size=512m -p 8501:8501 -e INVOICE_DATA_ROOT=/app/data -e RAG_KB_PATH=/app/runtime/knowledge_base.json -e HEALTHCHECK_PORT=8501 -e HEALTHCHECK_PATH=/ -v /opt/billing/data:/app/data -v /opt/billing/runtime:/app/runtime agentic-ai-billing-agent:demo python scripts/dashboard.py --host 0.0.0.0 --port 8501",
         "curl --fail --retry 12 --retry-delay 5 http://127.0.0.1:8000/health",
         "curl --fail --retry 12 --retry-delay 5 http://127.0.0.1:8501/ >/dev/null"
     )

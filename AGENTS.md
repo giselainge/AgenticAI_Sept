@@ -26,6 +26,7 @@ Unsupported documents must be classified as `unsupported` or `valid_invoice=fals
 Keep the project as a lightweight Python app unless the user explicitly asks for a deeper packaging refactor. The scripts in `scripts/` are stable commands and should remain runnable:
 
 - `scripts/dashboard.py`: local HTTP dashboard, import workflow, manual review, provider memory updates, CSV export, Gemini import controls, and PDF preview.
+- `scripts/gradio_app.py`: loopback-only local Plan A/Plan B lab and provider-memory viewer; external LLM calls stay disabled.
 - `scripts/ocr_text_extraction.py`: OCR/text extraction pipeline for PDFs and image files.
 - `scripts/extract_invoice_fields.py`: deterministic parser that reads OCR text files and writes structured invoice rows.
 - `scripts/second_pass_llm.py`: Gemini PDF second-pass orchestration with RAG context, TXT parsing, normalization, validation, and stable artifact output.
@@ -33,9 +34,7 @@ Keep the project as a lightweight Python app unless the user explicitly asks for
 - `llm/agent/prompts.py`: LLM prompt templates.
 - `llm/agent/workflow.py`: experimental Plan B coded-agent state machine and isolated A/B artifacts.
 - `llm/api/schemas.py`: typed request/output schemas for API-style integrations.
-- `rag/adaptive_rag.py`: local provider memory adapter, OCR corrections, feedback recording, vector retrieval handoff, and conversion into LLM-facing `RagSnippet` objects.
-- `vector_store/base.py`: FAISS/LlamaIndex vector index factory for provider-memory retrieval, mirroring the `Agenti-AI-main` vector-store style.
-- `vector_store/documents.py`: provider-memory document conversion for the local vector index.
+- `rag/adaptive_rag.py`: local JSON provider memory adapter, OCR corrections, feedback recording, provider-scoped retrieval, and conversion into LLM-facing `RagSnippet` objects.
 
 Shared reusable code belongs in `invoice_parser/`:
 
@@ -62,72 +61,62 @@ Do not introduce a `src/` layout unless the user explicitly requests it.
 - `.env.example`: placeholder environment configuration only; never store live keys.
 - `scripts/`: runnable entry-point scripts.
 - `llm/agent/` and `llm/api/`: mirrored typed LLM model/schema structure used by `scripts/second_pass_llm.py`.
-- `vector_store/`: FAISS/LlamaIndex vector-store package for provider-memory retrieval.
-- `docs/workflow_graph.md`: Mermaid workflow diagram showing source, trackable invoice data, local runtime memory, generated outputs, review, tests, logs, and documentation boundaries.
+- `docs/workflow_graph.md`: Mermaid workflow diagram showing source, private local invoice data, runtime memory, generated outputs, review, tests, logs, and documentation boundaries.
 - `deploy/aws/`: ephemeral CloudFormation/SSM deployment, status, destruction, and operating instructions.
-- `requirements.txt`: Python dependencies.
-- `requirements-dev.txt`: local test dependencies layered on the runtime requirements.
+- `pyproject.toml`: the only direct dependency and project metadata source; tests use the `dev` dependency group.
+- `uv.lock`: reproducible resolution for local and Docker environments.
 - `tests/`: pytest tests and smoke tests.
 - `docs/`: project notes and supporting documentation that are not runtime entry points.
 - `rag/knowledge_base.json`: generated/local persisted provider memory when provider memory exists.
 - `rag/last_retrieval_context.json`: generated/local exported retrieval context sample when retrieval is exported.
-- `data/data_raw/`: original uploaded/source invoice files. Treat as immutable and review before committing.
+- `data/data_raw/`: original uploaded/source invoice files. Treat as immutable and never commit them.
 - `data/data_pdf/`: canonical/searchable PDFs generated or copied by OCR processing.
 - `data/data_txt/`: selected OCR text files and OCR diagnostics.
 - `data/data_processed/invoice_structured_fields.csv`: dashboard/manual-review CSV.
 - `data/data_processed/reports/`: OCR report JSON/CSV files.
 - `data/data_processed/llm_second_pass/`: generated Gemini raw TXT and structured JSON artifacts.
 - `data/data_processed/agentic_ab_tests/`: isolated Plan A/Plan B comparisons, agent traces, and human accuracy verdicts.
-- `data/data_processed/vector_store/`: generated FAISS/LlamaIndex provider-memory index.
 
-The `data/` tree is intentionally trackable. Clean checkouts contain invoice data only when it has been committed; otherwise create only the needed local folders, or let dashboard import/OCR commands create generated folders. A file that exists only in `data/data_raw/` is a raw input, not a processed invoice.
+The `data/` tree is ignored because invoices and generated artifacts may contain private information. Let dashboard import/OCR commands create the needed local folders. A file that exists only in `data/data_raw/` is a raw input, not a processed invoice.
 
 ## Main Commands
 
 Use PowerShell examples for this Windows repo.
 
-Install dependencies:
+Install the locked core and development dependencies:
 
 ```powershell
-python -m pip install -r requirements.txt
+uv sync --frozen
 ```
 
 Run OCR over the default raw data folder:
 
 ```powershell
-python scripts\ocr_text_extraction.py
+uv run python scripts\ocr_text_extraction.py
 ```
 
 Run OCR for one file:
 
 ```powershell
-python scripts\ocr_text_extraction.py --input data\data_raw\agua_01.webp
+uv run python scripts\ocr_text_extraction.py --input data\data_raw\agua_01.webp
 ```
 
 Extract structured invoice fields from OCR text:
 
 ```powershell
-python scripts\extract_invoice_fields.py
+uv run python scripts\extract_invoice_fields.py
 ```
 
 Seed or refresh provider memory from the structured CSV:
 
 ```powershell
-python rag\adaptive_rag.py init
+uv run python rag\adaptive_rag.py init
 ```
-
-Build or refresh the local provider-memory vector index:
-
-```powershell
-python rag\adaptive_rag.py index
-```
-
-The first vector-index build may need to download the configured HuggingFace embedding model. Do not run it in tests or routine quality checks unless the user explicitly approves generated index artifacts and any required network/model access.
 
 Retrieve provider-specific context:
 
 ```powershell
-python rag\adaptive_rag.py retrieve --text-file data\data_txt\telecom_05.txt --provider vodafone --invoice-type telecom
+uv run python rag\adaptive_rag.py retrieve --text-file data\data_txt\telecom_05.txt --provider vodafone --invoice-type telecom
 ```
 
 Run Gemini PDF second pass for one invoice:
@@ -135,25 +124,27 @@ Run Gemini PDF second pass for one invoice:
 ```powershell
 $env:GEMINI_API_KEY="your-real-key"
 $env:GEMINI_MODEL="gemini-3.5-flash"
-python scripts\second_pass_llm.py --pdf-file data\data_pdf\telecom_05.pdf --text-file data\data_txt\telecom_05.txt --provider vodafone --invoice-type telecom
+uv run python scripts\second_pass_llm.py --pdf-file data\data_pdf\telecom_05.pdf --text-file data\data_txt\telecom_05.txt --provider vodafone --invoice-type telecom
 ```
 
 Run the dashboard:
 
 ```powershell
-python scripts\dashboard.py
+uv run python scripts\dashboard.py
+uv run python scripts\gradio_app.py
 ```
 
 Default dashboard URL:
 
 ```text
 http://127.0.0.1:8501
+http://127.0.0.1:7860
 ```
 
 Run tests:
 
 ```powershell
-python -m pytest tests
+uv run pytest
 ```
 
 ## Development Rules
@@ -174,7 +165,7 @@ python -m pytest tests
 - Keep Plan B experimental and side-effect free with respect to the review CSV and provider memory. Agent traces must not include API keys or full OCR/PDF content. A/B accuracy claims require a human verdict or labeled ground truth.
 - Keep LLM schemas/models in `llm/agent/` and `llm/api/`; keep the executable second-pass workflow in `scripts/second_pass_llm.py`.
 - RAG may import `llm.agent.models.RagSnippet` for prompt-ready context, but provider memory ownership stays in `rag/adaptive_rag.py`.
-- Build vector retrieval under `vector_store/` and generated index files under `data/data_processed/vector_store/`; do not add a `src/` layout unless the user explicitly asks.
+- Do not add a model-download or vector-embedding dependency without explicit user authorization. Do not add a `src/` layout unless the user explicitly asks.
 - When splitting large files, preserve direct `scripts/` commands so existing workflows keep working.
 - Do not delete historical artifacts, generated reports, or old timestamped Gemini artifacts unless the user explicitly approves deletion.
 - Summarize changed files and checks after every edit.
@@ -187,7 +178,7 @@ python -m pytest tests
 - Keep `.env` ignored.
 - Keep `.env.example` as placeholders only.
 - Keep `.gitignore` active for local caches, logs, environments, secrets, and runtime RAG memory.
-- The `data/` folders are no longer ignored. Commit raw invoices, OCR outputs, generated reports, structured CSV rows, Gemini artifacts, and vector indexes only after reviewing them for private/customer information.
+- Keep the ignored `data/` tree local. Do not commit raw invoices, OCR outputs, generated reports, structured rows, or Gemini artifacts.
 - Keep `rag/knowledge_base.json` and `rag/last_retrieval_context.json` ignored because they can contain local reviewer feedback and retrieval traces.
 - Legacy `env.example` and `gitignore` files may exist from earlier setup; `.env.example` and `.gitignore` are the active convention.
 - Dashboard API key fields are request-only; do not persist or log them.
@@ -299,7 +290,7 @@ Rules:
 
 ## RAG And Provider Memory
 
-Provider memory lives in `rag/knowledge_base.json` and is managed by `rag/adaptive_rag.py`. Vector retrieval is built from that JSON memory and persisted under `data/data_processed/vector_store/`.
+Provider memory lives in `rag/knowledge_base.json` and is managed by `rag/adaptive_rag.py`. Retrieval is deterministic, local, and scoped to the identified provider.
 
 The knowledge base stores:
 
@@ -314,7 +305,7 @@ The knowledge base stores:
 
 Use `build_extraction_context(...)` for deterministic JSON context before improving extraction logic. Use `record_feedback(...)` or the dashboard review workflow to store reviewer corrections.
 
-Use `build_llm_rag_snippets(...)` when Gemini prompt code needs provider memory. It retrieves from the vector store first, falls back to JSON provider memory if vector dependencies or the index are unavailable, and returns typed `RagSnippet` objects from `llm.agent.models`.
+Use `build_llm_rag_snippets(...)` when Gemini prompt code needs provider memory. It reads only the matching provider's JSON memory and returns typed `RagSnippet` objects from `llm.agent.models`.
 
 When fields are corrected in the dashboard, store both the corrected row and structured RAG feedback. Field-level corrections should update provider `human_reviewer_feedback`, `field_correction_patterns`, and validation history so future extraction and Gemini prompts can learn from them.
 
@@ -332,7 +323,7 @@ Known provider IDs include:
 - `arm`
 - `unknown`
 
-New named suppliers use stable `provider_...` IDs. JSON and vector retrieval must only apply the identified provider's feedback. Missing vector indexes fall back to JSON without an implicit index build. Unidentified suppliers cannot gain approval eligibility from the shared legacy `unknown` bucket. Existing mixed or misidentified memory needs manual source review, not automatic reassignment.
+New named suppliers use stable `provider_...` IDs. Retrieval must only apply the identified provider's feedback. Unidentified suppliers cannot gain approval eligibility from the shared legacy `unknown` bucket. Existing mixed or misidentified memory needs manual source review, not automatic reassignment.
 
 ## Dashboard Workflow
 
@@ -368,7 +359,7 @@ When editing dashboard code, preserve path safety checks for PDF serving and upl
 
 ## Docker And API Runtime
 
-`Dockerfile` is a multi-stage, non-root runtime containing required local OCR tools. `docker-compose.yaml` runs the lightweight FastAPI health service on port `8000` and the review dashboard on port `8501` from the same image. Both persist `/app/data` and `/app/runtime`; neither container should write application code. The API is not an OpenAI-compatible inference server.
+`Dockerfile` is a multi-stage, non-root runtime containing required local OCR tools. `docker-compose.yaml` runs the FastAPI health service on port `8000`, the review dashboard on port `8501`, and the Gradio A/B lab on port `7860` from the same image. The services persist `/app/data` and `/app/runtime`; none should write application code. The API is not an OpenAI-compatible inference server.
 
 Deployment is manual for this private college project. Do not add GitOps, pull-request workflows, CI/CD workflows, Vercel configuration, repository deployment hooks, or automatic application releases. Do not create or publish a PR for project changes. AWS scripts must remain explicitly operator-invoked; the scheduled AWS action is limited to deleting the temporary stack.
 
@@ -378,11 +369,12 @@ The AWS deployment under `deploy/aws/` is deliberately ephemeral. It must use an
 
 For code changes, run the smallest practical smoke check:
 
-- Shared helpers or extraction logic: `python -m pytest tests`.
-- Gemini second pass only: `python -m pytest tests\test_second_pass.py`.
-- Deterministic extraction changes: `python scripts\extract_invoice_fields.py`, then verify the CSV is generated.
+- Shared helpers or extraction logic: `uv run pytest`.
+- Gemini second pass only: `uv run pytest tests\test_second_pass.py`.
+- Deterministic extraction changes: `uv run python scripts\extract_invoice_fields.py`, then verify the CSV is generated.
 - RAG memory changes: `python rag\adaptive_rag.py init`, then verify the knowledge base refreshes.
-- Dashboard behavior changes: import the module, then run `python scripts\dashboard.py` if manual review is needed.
+- Gradio behavior changes: run `uv run python scripts\gradio_app.py`, verify loopback access, and exercise both A/B output panels.
+- Dashboard behavior changes: import the module, then run `uv run python scripts\dashboard.py` if manual review is needed.
 
 Do not claim tests passed unless they were actually run.
 
@@ -424,8 +416,8 @@ Update `AGENTS.md` when stable project conventions change. Update `README.md` wh
 - OCR depends on local Tesseract/OCRmyPDF installation and PATH configuration.
 - Deterministic extraction is regex/heuristic logic.
 - Gemini second pass depends on API key, model access, quota, and network availability.
-- Provider memory is JSON-based and indexed locally into FAISS/LlamaIndex when vector dependencies are installed; first index build can require embedding model access.
-- Clean checkouts include `data/` only when invoice data has been committed; otherwise import/OCR/extraction workflows create local folders.
+- Provider memory is JSON-based and uses deterministic provider-scoped retrieval.
+- Clean checkouts contain no invoice data; import/OCR/extraction workflows create the ignored local folders.
 - Existing historical reports and old timestamped Gemini artifacts may contain stale generated data from earlier runs.
 
 ## Conflict Markers

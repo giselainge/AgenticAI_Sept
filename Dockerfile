@@ -1,21 +1,21 @@
-# syntax=docker/dockerfile:1
+FROM ghcr.io/astral-sh/uv:0.12.13 AS uv-bin
 
 FROM python:3.13-slim-bookworm AS python-dependencies
 
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1 \
-    VIRTUAL_ENV=/opt/venv
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_NO_PROGRESS=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_PYTHON_DOWNLOADS=never
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends build-essential libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python -m venv "$VIRTUAL_ENV"
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
-COPY requirements.txt /tmp/requirements.txt
-RUN python -m pip install --upgrade pip \
-    && python -m pip install --requirement /tmp/requirements.txt
+COPY --from=uv-bin /uv /uvx /bin/
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 
 FROM python:3.13-slim-bookworm AS runtime
@@ -30,12 +30,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     INVOICE_DATA_ROOT=/app/data \
     RAG_KB_PATH=/app/runtime/knowledge_base.json \
-    VECTOR_STORE_DIR=/app/runtime/vector_store \
-    HF_HOME=/app/runtime/huggingface
+    HEALTHCHECK_PORT=8000 \
+    HEALTHCHECK_PATH=/health
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         ghostscript \
+        libgomp1 \
         libmagic1 \
         pngquant \
         qpdf \
@@ -62,10 +63,10 @@ RUN groupadd --gid "$APP_GID" app \
 
 USER app
 
-EXPOSE 8000 8501
+EXPOSE 8000 7860 8501
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+    CMD ["python", "-c", "import os, urllib.request; port = os.environ.get('HEALTHCHECK_PORT', '8000'); path = os.environ.get('HEALTHCHECK_PATH', '/health'); urllib.request.urlopen(f'http://127.0.0.1:{port}{path}', timeout=3).read()"]
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["uvicorn", "llm.main:app", "--host", "0.0.0.0", "--port", "8000"]
