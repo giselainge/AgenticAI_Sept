@@ -526,3 +526,26 @@ def test_rag_context_shows_selected_invoice_and_compact_provider_context(monkeyp
     assert "Past approved examples" not in html
     assert "Helpful Memory For This Invoice" not in html
     assert "Recent Similar Invoices" not in html
+
+
+def test_informational_ocr_warning_does_not_force_manual_review() -> None:
+    from scripts.ocr_text_extraction import Layer6Result, update_review_flags
+
+    result = Layer6Result(
+        source_file="invoice.pdf",
+        file_type="pdf",
+        selected_text="Invoice text with enough characters " * 10,
+        warnings=["Skipped OCR because the final text file already exists."],
+    )
+    update_review_flags(
+        result,
+        {
+            "score": 0.9,
+            "character_count": 300,
+            "invoice_keyword_count": 1,
+            "money_count": 1,
+            "date_count": 1,
+        },
+    )
+
+    assert result.requires_manual_review is False
