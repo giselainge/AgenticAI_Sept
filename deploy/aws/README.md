@@ -13,6 +13,9 @@ The instance is managed with Systems Manager; port 22 is never opened. Ports 786
 - A transactional SQLite provider-memory database at `/opt/billing/runtime/knowledge_base.sqlite3`,
   persisted on the encrypted EC2 volume only for the life of the stack.
 
+The first Gradio session creates the database with a safe provider/category catalog and no invoice values.
+Uploaded or reviewed invoices then populate that runtime database; private local invoice files are never bundled.
+
 No Gemini key is uploaded. Enter a temporary key in the dashboard when running Gemini or Plan B. The package does not deploy `Qwen/Qwen3.5-9B`: the old `/v1` address was an OpenAI-compatible model service, while this repository currently calls Gemini directly and contains no Qwen client. Hosting a 9B model requires a separate GPU design, model licensing review, and cost controls.
 
 ## One-time AWS CLI setup

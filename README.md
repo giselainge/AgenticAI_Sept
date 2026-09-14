@@ -459,4 +459,4 @@ To retrieve context manually run (with example):
 uv run python rag\adaptive_rag.py retrieve --text-file data\data_txt\telecom_05.txt --provider vodafone --invoice-type telecom
 ```
 
-Provider retrieval prefers matching FAISS results and falls back to provider-scoped SQLite memory when an index is absent. The database separates unreviewed observations from explicitly source-verified invoices. The embedding is computed locally with Torch and never applies one supplier's feedback to another supplier.
+Provider retrieval prefers matching FAISS results and falls back to provider-scoped SQLite memory when an index is absent. A fresh database starts with safe provider/category guidance for EDP, EEM, EPAL, EAMB, ARM, Galp and Vodafone, while unfamiliar suppliers still receive their own IDs when encountered. No invoice values are shipped in that catalog. Local preprocessed rows are stored as unreviewed observations; only explicitly source-verified invoices enter approved history. The embedding is computed locally with Torch and never applies one supplier's feedback to another supplier.
