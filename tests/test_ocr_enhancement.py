@@ -45,6 +45,8 @@ def test_small_image_ocr_selects_measured_enhanced_pass_and_refreshes_cache(tmp_
     assert result.baseline.used is True
     assert result.enhanced.used is True
     assert result.extraction_method == "tesseract_image_enhanced"
+    assert result.searchable_pdf and result.searchable_pdf.endswith("_enhanced_model.pdf")
+    assert Path(result.searchable_pdf).exists()
     assert result.quality_score > (result.baseline.quality or {})["score"]
     assert result.ocr_comparison_file and Path(result.ocr_comparison_file).exists()
     assert "stale cached OCR" not in Path(result.selected_text_file or "").read_text(encoding="utf-8")
@@ -81,10 +83,12 @@ def test_scanned_pdf_falls_back_to_poppler_and_tesseract_without_ocrmypdf(
             else "Fatura ilegível"
         )
         quality = ocr.score_ocr_quality(text)
+        model_pdf = tmp_path / ("invoice_enhanced_model.pdf" if enhanced else "invoice.pdf")
+        model_pdf.write_bytes(b"%PDF-1.4\n")
         return ocr.OcrPassResult(
             used=True,
             method="tesseract_pdf_enhanced" if enhanced else "tesseract_pdf_baseline",
-            searchable_pdf=str(source),
+            searchable_pdf=str(model_pdf),
             raw_text=text,
             cleaned_text=text,
             quality=quality,
@@ -104,5 +108,40 @@ def test_scanned_pdf_falls_back_to_poppler_and_tesseract_without_ocrmypdf(
     assert result.baseline.used is True
     assert result.enhanced.used is True
     assert result.extraction_method == "tesseract_pdf_enhanced"
+    assert result.searchable_pdf and result.searchable_pdf.endswith("_enhanced_model.pdf")
     assert result.selected_text_file and Path(result.selected_text_file).exists()
     assert any("Poppler + Tesseract" in warning for warning in result.warnings)
+
+
+def test_enhanced_pdf_pass_persists_the_pages_used_for_visual_model(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "invoice.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+    rendered = tmp_path / "rendered.png"
+    Image.new("RGB", (160, 240), "white").save(rendered)
+    text_dir = tmp_path / "text"
+    work_dir = tmp_path / "work"
+    text_dir.mkdir()
+
+    monkeypatch.setattr(ocr, "render_pdf_pages", lambda *_args, **_kwargs: [rendered])
+    monkeypatch.setattr(ocr.pytesseract, "get_languages", lambda config="": ["eng"])
+    monkeypatch.setattr(
+        ocr.pytesseract,
+        "image_to_string",
+        lambda *_args, **_kwargs: "Invoice FT 7 Date 14/09/2026 Total 12.30 EUR",
+    )
+
+    result = ocr.run_tesseract_pdf_pass(
+        source,
+        source,
+        text_dir,
+        work_dir,
+        enhanced=True,
+    )
+
+    assert result.searchable_pdf and result.searchable_pdf.endswith("_enhanced_model.pdf")
+    assert Path(result.searchable_pdf).exists()
+    model_bytes = Path(result.searchable_pdf).read_bytes()
+    assert model_bytes.startswith(b"%PDF")
+    assert len(model_bytes) > 1_000

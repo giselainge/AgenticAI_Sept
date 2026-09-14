@@ -73,6 +73,32 @@ def test_local_inspection_exposes_fields_postprocess_and_safe_audit_log(tmp_path
     assert artifact == state
 
 
+def test_retrieve_fields_button_always_enables_plan_b_llm(monkeypatch) -> None:
+    captured = {}
+
+    def fake_run(uploaded_file, enabled, model, api_key, provider):
+        captured.update(
+            uploaded_file=uploaded_file,
+            enabled=enabled,
+            model=model,
+            api_key=api_key,
+            provider=provider,
+        )
+        return ("ok",) * 11
+
+    monkeypatch.setattr(gradio_app, "run_local_inspection", fake_run)
+    result = gradio_app.retrieve_fields_with_llm("invoice.pdf", "model", "request-key", "openai")
+
+    assert result == ("ok",) * 11
+    assert captured == {
+        "uploaded_file": "invoice.pdf",
+        "enabled": True,
+        "model": "model",
+        "api_key": "request-key",
+        "provider": "openai",
+    }
+
+
 def test_local_gradio_verdict_is_saved(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(gradio_app, "DEFAULT_AGENTIC_AB_DIR", tmp_path / "ab")
     monkeypatch.setattr(gradio_app, "DEFAULT_KB", tmp_path / "knowledge_base.json")

@@ -338,6 +338,22 @@ def run_local_inspection(
     )
 
 
+def retrieve_fields_with_llm(
+    uploaded_file: Any,
+    plan_b_model: str = "",
+    plan_b_api_key: str = "",
+    llm_provider: str = "openai",
+) -> tuple[Any, ...]:
+    """Run the original field retrieval behavior through Plan B's extraction agent."""
+    return run_local_inspection(
+        uploaded_file,
+        True,
+        plan_b_model,
+        plan_b_api_key,
+        llm_provider,
+    )
+
+
 def save_verdict(artifact_path: str, preferred_plan: str, note: str) -> str:
     if not artifact_path:
         return "Run an A/B test before saving a verdict."
@@ -574,13 +590,12 @@ def build_demo() -> Any:
                 file_types=[".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"],
                 type="filepath",
             )
-            with gr.Accordion("Optional Plan B LLM extraction", open=False):
+            with gr.Accordion("Retrieve fields with GPT / Gemini", open=True):
                 gr.Markdown(
-                    "When enabled, Plan B sends the invoice PDF, OCR evidence, and provider RAG context to "
-                    "the selected model provider. Leave it disabled for a fully offline OCR + agent-rules "
-                    "comparison. Keys remain in memory for the request and are never saved."
+                    "This preserves the original model field-retrieval step and runs it as Plan B's "
+                    "Extraction Agent. It sends the enhanced invoice PDF, OCR evidence, and matching "
+                    "provider knowledge to the selected provider. Keys remain in memory for this request."
                 )
-                enable_plan_b_llm = gr.Checkbox(label="Enable LLM for Plan B", value=False)
                 plan_b_provider = gr.Dropdown(
                     choices=[("OpenAI", "openai"), ("Gemini", "gemini")],
                     value=os.getenv("LLM_PROVIDER", "openai"),
@@ -592,7 +607,12 @@ def build_demo() -> Any:
                     placeholder="OpenAI: gpt-5.6-terra; Gemini: gemini-3.5-flash",
                 )
                 plan_b_api_key = gr.Textbox(label="Provider API key", type="password")
-            run_button = gr.Button("Run local A/B test", variant="primary")
+                retrieve_fields_button = gr.Button(
+                    "Retrieve fields with GPT / Gemini and compare Plan A vs Plan B",
+                    variant="primary",
+                )
+            enable_plan_b_llm = gr.State(False)
+            run_button = gr.Button("Run OCR-only A/B test")
             status = gr.Markdown()
             run_summary = gr.JSON(label="Field retrieval and routing summary")
             field_table = gr.Dataframe(
@@ -630,6 +650,23 @@ def build_demo() -> Any:
             run_button.click(
                 run_local_inspection,
                 inputs=[invoice, enable_plan_b_llm, plan_b_model, plan_b_api_key, plan_b_provider],
+                outputs=[
+                    status,
+                    run_summary,
+                    field_table,
+                    plan_a,
+                    plan_b,
+                    comparison,
+                    trace,
+                    processing_details,
+                    audit_log,
+                    artifact,
+                    artifact_state,
+                ],
+            )
+            retrieve_fields_button.click(
+                retrieve_fields_with_llm,
+                inputs=[invoice, plan_b_model, plan_b_api_key, plan_b_provider],
                 outputs=[
                     status,
                     run_summary,

@@ -537,6 +537,29 @@ def build_ocr_pass_result(
     )
 
 
+def save_model_pdf(images: list[Any], output_path: Path) -> Path:
+    """Persist the exact enhanced page images supplied to a visual LLM."""
+    if not images:
+        raise RuntimeError("No enhanced pages were available for the model PDF.")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    rgb_images = [image.convert("RGB") for image in images]
+    try:
+        first, *remaining = rgb_images
+        first.save(
+            output_path,
+            "PDF",
+            resolution=OCR_DPI,
+            save_all=True,
+            append_images=remaining,
+            quality=85,
+            optimize=True,
+        )
+    finally:
+        for image in rgb_images:
+            image.close()
+    return output_path
+
+
 def run_tesseract_image_pass(
     source_file: Path,
     searchable_pdf: Path,
@@ -550,6 +573,7 @@ def run_tesseract_image_pass(
     available_languages = set(pytesseract.get_languages(config=""))
     languages = "+".join(language for language in OCR_LANGUAGES if language in available_languages)
     label = "tesseract_image_enhanced" if enhanced else "tesseract_image_baseline"
+    model_pdf = searchable_pdf
     with Image.open(source_file) as opened:
         image = ImageOps.exif_transpose(opened).convert("RGB")
         if enhanced:
@@ -564,6 +588,10 @@ def run_tesseract_image_pass(
                 )
             image = ImageOps.autocontrast(ImageOps.grayscale(image), cutoff=1)
             image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=180, threshold=3))
+            model_pdf = save_model_pdf(
+                [image],
+                searchable_pdf.with_name(f"{searchable_pdf.stem}_enhanced_model.pdf"),
+            )
         raw_text = pytesseract.image_to_string(
             image,
             lang=languages or None,
@@ -573,7 +601,7 @@ def run_tesseract_image_pass(
     result = build_ocr_pass_result(
         label,
         source_file,
-        searchable_pdf,
+        model_pdf,
         raw_text,
         [raw_text],
         text_output_dir,
@@ -585,7 +613,7 @@ def run_tesseract_image_pass(
         result.cleaned_text,
         result.quality or {},
         text_output_dir,
-        searchable_pdf,
+        model_pdf,
     )
     result.raw_text_file = raw_file
     result.cleaned_text_file = cleaned_file
@@ -641,6 +669,7 @@ def run_tesseract_pdf_pass(
     available_languages = set(pytesseract.get_languages(config=""))
     languages = "+".join(language for language in OCR_LANGUAGES if language in available_languages)
     page_texts: list[str] = []
+    model_pages: list[Any] = []
     for page_path in pages:
         with Image.open(page_path) as opened:
             image = ImageOps.exif_transpose(opened).convert("RGB")
@@ -656,6 +685,7 @@ def run_tesseract_pdf_pass(
                     )
                 image = ImageOps.autocontrast(ImageOps.grayscale(image), cutoff=1)
                 image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=180, threshold=3))
+                model_pages.append(image.copy())
             page_texts.append(
                 pytesseract.image_to_string(
                     image,
@@ -663,11 +693,21 @@ def run_tesseract_pdf_pass(
                     config=f"--oem 1 --psm 3 --dpi {OCR_DPI} -c preserve_interword_spaces=1",
                 )
             )
+    model_pdf = input_pdf
+    if enhanced:
+        try:
+            model_pdf = save_model_pdf(
+                model_pages,
+                work_dir / f"{input_pdf.stem}_enhanced_model.pdf",
+            )
+        finally:
+            for image in model_pages:
+                image.close()
     raw_text = "\n\n".join(page_texts)
     result = build_ocr_pass_result(
         label,
         source_file,
-        input_pdf,
+        model_pdf,
         raw_text,
         page_texts,
         text_output_dir,
@@ -679,7 +719,7 @@ def run_tesseract_pdf_pass(
         result.cleaned_text,
         result.quality or {},
         text_output_dir,
-        input_pdf,
+        model_pdf,
     )
     result.raw_text_file = raw_file
     result.cleaned_text_file = cleaned_file
@@ -1123,7 +1163,7 @@ def process_file(
             result.extraction_method = selected_label
             result.selected_text = selected_pass.cleaned_text
             result.selected_text_file = str(selected_path)
-            result.searchable_pdf = str(input_pdf)
+            result.searchable_pdf = selected_pass.searchable_pdf
             result.raw_text_file = selected_pass.raw_text_file
             result.cleaned_text_file = selected_pass.cleaned_text_file
             result.diagnostics_file = selected_pass.diagnostics_file
@@ -1191,7 +1231,7 @@ def process_file(
             result.raw_text_file = selected_pass.raw_text_file
             result.cleaned_text_file = selected_pass.cleaned_text_file
             result.diagnostics_file = selected_pass.diagnostics_file
-            result.searchable_pdf = str(input_pdf)
+            result.searchable_pdf = selected_pass.searchable_pdf
             result.quality_score = float(quality.get("score", 0.0))
             update_review_flags(result, quality)
             return result
