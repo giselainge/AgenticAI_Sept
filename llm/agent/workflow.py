@@ -392,7 +392,7 @@ def _plan(name: str, method: str, row: dict[str, str], kb: dict[str, Any], *, ll
     )
 
 
-def _comparison(plan_a: PlanResult, plan_b: PlanResult) -> dict[str, Any]:
+def compare_plans(plan_a: PlanResult, plan_b: PlanResult) -> dict[str, Any]:
     changes = [
         {"field": name, "plan_a": plan_a.row.get(name, NULL_VALUE), "plan_b": plan_b.row.get(name, NULL_VALUE)}
         for name in COMPARABLE_FIELDS
@@ -418,12 +418,14 @@ def run_agentic_ab_test(
     model: str | None = None,
     llm_provider: str = "gemini",
     llm_runner: Callable[..., SecondPassResult] | None = None,
+    baseline_extractor: Callable[[Path], dict[str, str]] = extract_row,
+    plan_a_method: str = "OCR plus deterministic extraction",
 ) -> AgenticABResult:
     text_path = Path(text_file)
     if not text_path.exists():
         raise FileNotFoundError(f"OCR text file does not exist: {text_path}")
     source_name, ocr_text = read_ocr_body(text_path)
-    baseline_row = extract_row(text_path)
+    baseline_row = baseline_extractor(text_path)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     context = AgentContext(
@@ -442,7 +444,7 @@ def run_agentic_ab_test(
     )
     trace = PlanBOrchestrator().run(context)
     kb = load_kb(kb_path)
-    plan_a = _plan("Plan A", "OCR plus deterministic extraction", baseline_row, kb)
+    plan_a = _plan("Plan A", plan_a_method, baseline_row, kb)
     plan_b = PlanResult(
         name="Plan B",
         method=f"coded agent orchestration with provider RAG and optional {llm_provider.title()} PDF extraction",
@@ -457,7 +459,7 @@ def run_agentic_ab_test(
         source_name=source_name,
         plan_a=plan_a,
         plan_b=plan_b,
-        comparison=_comparison(plan_a, plan_b),
+        comparison=compare_plans(plan_a, plan_b),
         plan_b_trace=trace,
     )
     stem = text_path.stem.removesuffix("_selected_text")

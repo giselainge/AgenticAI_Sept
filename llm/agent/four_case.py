@@ -16,6 +16,7 @@ from invoice_parser.text_utils import fold_text, normalize_money, normalize_spac
 from llm.agent.judge import run_four_case_judge
 from llm.agent.models import FourCaseJudgeResult, JudgeCaller
 from llm.agent.workflow import (
+    AgentEvent,
     PlanResult,
     count_prior_approved,
     field_completion,
@@ -26,6 +27,7 @@ from llm.agent.workflow import (
 )
 from rag.adaptive_rag import load_kb
 from scripts.extract_invoice_fields import read_ocr_body
+from scripts.july_extract_invoice_fields import extract_row as extract_july_row
 
 
 CASE_IDS = ("ocr_rules", "ocr_llm", "ocr_agentic", "ocr_llm_agentic")
@@ -52,10 +54,11 @@ class FourCaseCandidate(BaseModel):
 
 
 class FourCaseEvaluation(BaseModel):
-    schema_version: int = 1
+    schema_version: int = 2
     generated_at: str
     source_name: str
     cases: dict[str, FourCaseCandidate]
+    agent_trace: list[AgentEvent] = Field(default_factory=list)
     judge: FourCaseJudgeResult | None = None
     human_evaluation: dict[str, Any] | None = None
     human_field_evaluation: dict[str, Any] | None = None
@@ -127,10 +130,12 @@ def run_four_case_evaluation(
         kb_path=kb_path,
         output_dir=output / "offline",
         api_key="",
+        baseline_extractor=extract_july_row,
+        plan_a_method="Frozen July OCR plus deterministic extraction",
     )
     cases: dict[str, FourCaseCandidate] = {
-        "ocr_rules": _candidate("ocr_rules", "OCR + deterministic fields", offline.plan_a),
-        "ocr_agentic": _candidate("ocr_agentic", "OCR + agentic rules", offline.plan_b),
+        "ocr_rules": _candidate("ocr_rules", "Ablation: July OCR + rules", offline.plan_a),
+        "ocr_agentic": _candidate("ocr_agentic", "Ablation: July OCR + agentic rules", offline.plan_b),
     }
 
     selected_provider = "openai" if llm_provider == "openai" else "gemini"
@@ -138,18 +143,19 @@ def run_four_case_evaluation(
     selected_model = llm_model or (
         "gpt-5.6-terra" if selected_provider == "openai" else gemini_model
     )
+    agent_trace = offline.plan_b_trace
     if not selected_key or pdf_path is None or not pdf_path.exists():
         reason = f"A PDF and explicitly supplied {selected_provider.title()} API key are required."
         cases["ocr_llm"] = FourCaseCandidate(
             case_id="ocr_llm",
-            label="OCR + LLM",
+            label="Plan A: July OCR + LLM",
             status="unavailable",
             method=f"{selected_provider.title()} PDF/OCR extraction without agentic RAG",
             errors=[reason],
         )
         cases["ocr_llm_agentic"] = FourCaseCandidate(
             case_id="ocr_llm_agentic",
-            label="OCR + LLM + agentic workflow",
+            label="Plan B: July OCR + LLM + agentic workflow",
             status="unavailable",
             method=f"Plan B supervisor with provider RAG and {selected_provider.title()} extraction",
             errors=[reason],
@@ -178,11 +184,11 @@ def run_four_case_evaluation(
                 selected_provider,
             )
             direct_plan.row["ocr_text_file"] = str(text_path)
-            cases["ocr_llm"] = _candidate("ocr_llm", "OCR + LLM", direct_plan)
+            cases["ocr_llm"] = _candidate("ocr_llm", "Plan A: July OCR + LLM", direct_plan)
         else:
             cases["ocr_llm"] = FourCaseCandidate(
                 case_id="ocr_llm",
-                label="OCR + LLM",
+                label="Plan A: July OCR + LLM",
                 status="failed",
                 method=f"{selected_provider.title()} PDF/OCR extraction without agentic RAG",
                 errors=list(direct.errors),
@@ -196,10 +202,13 @@ def run_four_case_evaluation(
             api_key=selected_key,
             model=selected_model,
             llm_provider=selected_provider,
+            baseline_extractor=extract_july_row,
+            plan_a_method="Frozen July OCR plus deterministic extraction",
         )
+        agent_trace = agentic.plan_b_trace
         cases["ocr_llm_agentic"] = _candidate(
             "ocr_llm_agentic",
-            "OCR + LLM + agentic workflow",
+            "Plan B: July OCR + LLM + agentic workflow",
             agentic.plan_b,
             status="measured" if agentic.plan_b.llm_used else "fallback",
         )
@@ -209,6 +218,7 @@ def run_four_case_evaluation(
         generated_at=datetime.now(timezone.utc).isoformat(),
         source_name=source_name,
         cases=ordered_cases,
+        agent_trace=agent_trace,
     )
     artifact = output / f"{text_path.stem.removesuffix('_selected_text')}_four_case.json"
     return _write(result, artifact)

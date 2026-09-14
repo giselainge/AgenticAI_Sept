@@ -20,7 +20,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from invoice_parser.paths import (
     DEFAULT_AGENTIC_AB_DIR,
+    DEFAULT_PDF_DIR,
     DEFAULT_RAW_DIR,
+    DEFAULT_TEXT_DIR,
     DEFAULT_VECTOR_STORE_DIR,
 )
 from llm.agent.four_case import (
@@ -33,6 +35,7 @@ from llm.agent.four_case import (
 from llm.agent.workflow import AgenticABResult, judge_ab_artifact, record_ab_verdict, run_agentic_ab_test
 from rag.adaptive_rag import DEFAULT_KB, load_kb, record_validated_invoice
 from scripts.extract_invoice_fields import read_ocr_body
+from scripts.july_extract_invoice_fields import extract_row as extract_july_row
 from scripts.ocr_text_extraction import SUPPORTED_EXTENSIONS, process_file
 
 
@@ -82,6 +85,35 @@ def _copy_local(source: Path, destination_dir: Path) -> Path:
     return destination
 
 
+def _base_invoice_stem(stem: str) -> str:
+    clean = _safe_stem(stem)
+    while re.search(r"_[0-9a-f]{8}$", clean, re.IGNORECASE):
+        clean = clean[:-9]
+    return clean
+
+
+def _july_baseline_text(source: Path) -> Path | None:
+    """Resolve the frozen preprocessed text supplied with the July baseline."""
+    direct = DEFAULT_TEXT_DIR / f"{_base_invoice_stem(source.stem)}.txt"
+    if direct.exists():
+        return direct
+
+    source_size = source.stat().st_size
+    source_digest = hashlib.sha256(source.read_bytes()).digest()
+    for directory in (DEFAULT_RAW_DIR, DEFAULT_PDF_DIR):
+        if not directory.exists():
+            continue
+        for candidate in directory.iterdir():
+            if not candidate.is_file() or candidate.stat().st_size != source_size:
+                continue
+            if hashlib.sha256(candidate.read_bytes()).digest() != source_digest:
+                continue
+            baseline = DEFAULT_TEXT_DIR / f"{_base_invoice_stem(candidate.stem)}.txt"
+            if baseline.exists():
+                return baseline
+    return None
+
+
 def _prepare_inputs(uploaded_file: Any) -> tuple[Path, Path | None, str, Any]:
     source = _uploaded_path(uploaded_file)
     if source is None:
@@ -97,8 +129,11 @@ def _prepare_inputs(uploaded_file: Any) -> tuple[Path, Path | None, str, Any]:
     if ocr_result.errors or not ocr_result.selected_text_file:
         details = "; ".join(ocr_result.errors or ["No usable OCR text was produced."])
         raise ValueError(details)
+    july_text = _july_baseline_text(source)
+    setattr(ocr_result, "july_baseline_used", july_text is not None)
+    setattr(ocr_result, "july_baseline_text_file", str(july_text) if july_text else None)
     return (
-        Path(ocr_result.selected_text_file),
+        july_text or Path(ocr_result.selected_text_file),
         Path(ocr_result.searchable_pdf) if ocr_result.searchable_pdf else None,
         source.name,
         ocr_result,
@@ -133,6 +168,8 @@ def _ocr_diagnostics(ocr_result: Any) -> dict[str, Any]:
         "errors": list(getattr(ocr_result, "errors", []) or []),
         "selected_text_file": getattr(ocr_result, "selected_text_file", None),
         "searchable_pdf": getattr(ocr_result, "searchable_pdf", None),
+        "july_baseline_used": bool(getattr(ocr_result, "july_baseline_used", False)),
+        "july_baseline_text_file": getattr(ocr_result, "july_baseline_text_file", None),
     }
 
 
@@ -278,6 +315,8 @@ def _execute_local_ab(
         api_key=selected_key,
         model=selected_model,
         llm_provider=selected_provider,
+        baseline_extractor=extract_july_row,
+        plan_a_method="Frozen July OCR plus deterministic extraction",
     )
     ocr = _ocr_diagnostics(ocr_result)
     result.preprocessing = ocr
