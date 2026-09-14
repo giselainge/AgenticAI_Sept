@@ -76,6 +76,7 @@ def test_cloudformation_stack_is_restricted_managed_and_self_deleting() -> None:
     ingress = resources["ApplicationSecurityGroup"]["Properties"]["SecurityGroupIngress"]
     assert {rule["FromPort"] for rule in ingress} == {7860}
     assert all(rule["CidrIp"] == {"Ref": "AllowedCidr"} for rule in ingress)
+    assert "'" not in resources["ApplicationSecurityGroup"]["Properties"]["GroupDescription"]
     assert resources["CleanupSchedule"]["Type"] == "AWS::Scheduler::Schedule"
     assert "ActionAfterCompletion" not in resources["CleanupSchedule"]["Properties"]
     cleanup_code = resources["CleanupFunction"]["Properties"]["Code"]["ZipFile"]

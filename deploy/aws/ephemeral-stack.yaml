@@ -73,7 +73,7 @@ Resources:
   ApplicationSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Restrict invoice API and dashboard to the deployer's public IP.
+      GroupDescription: Restrict the invoice A/B lab to the deployer public IP.
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
